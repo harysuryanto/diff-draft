@@ -4,20 +4,35 @@
   "description": "Generates intelligent commit message drafts from your Git diffs using AI.",
   "version": "0.0.1",
   "engines": {
-    "vscode": "^1.107.0"
+    "vscode": "^1.104.0"
   },
   "categories": [
-    "Other"
+    "Other",
+    "Machine Learning",
+    "SCM Providers"
   ],
   "activationEvents": [],
   "main": "./dist/extension.js",
   "contributes": {
-    "commands": [
-      {
-        "command": "diff-draft.helloWorld",
-        "title": "Hello World"
-      }
-    ]
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "diff-draft-view",
+          "title": "DiffDraft",
+          "icon": "$(edit)"
+        }
+      ]
+    },
+    "views": {
+      "diff-draft-view": [
+        {
+          "type": "webview",
+          "id": "geminiCommit.view",
+          "name": "Draft Commit",
+          "icon": "$(git-commit)"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",
@@ -34,9 +49,9 @@
     "test": "vscode-test"
   },
   "devDependencies": {
-    "@types/vscode": "^1.107.0",
     "@types/mocha": "^10.0.10",
-    "@types/node": "22.x",
+    "@types/node": "^25.0.3",
+    "@types/vscode": "^1.107.0",
     "typescript-eslint": "^8.48.1",
     "eslint": "^9.39.1",
     "esbuild": "^0.27.1",
