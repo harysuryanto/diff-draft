@@ -46,7 +46,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     if (!apiKey) {
       this._view?.webview.postMessage({
         type: "error",
-        value: "Please enter a Gemini API Key.",
+        value: "Please enter a Groq API Key.",
       });
       return;
     }
@@ -93,40 +93,48 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    // 4. Call Gemini API
+    // 4. Call Groq API
     try {
-      const result = await this.callGemini(apiKey, fullDiff);
+      const result = await this.callGroq(apiKey, fullDiff);
       this._view?.webview.postMessage({ type: "result", value: result });
     } catch (error: any) {
       this._view?.webview.postMessage({
         type: "error",
-        value: "Gemini API Error: " + error.message,
+        value: "Groq API Error: " + error.message,
       });
     }
   }
 
-  private async callGemini(apiKey: string, diff: string): Promise<string> {
-    const model = "gemini-1.5-flash";
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  private async callGroq(apiKey: string, diff: string): Promise<string> {
+    const model = "openai/gpt-oss-120b";
+    const url = "https://api.groq.com/openai/v1/chat/completions";
 
     const prompt = `
-      You are an expert developer. Generate a concise, standardized Git commit message for the following code changes.
-      Structure:
-      <type>: <subject>
+      You are a senior software architect. Analyze the FOLLOWING code changes deeply and generate a professional Git commit message.
 
-      - Use standard types (feat, fix, chore, docs, style, refactor).
-      - Keep it under 50 characters if possible.
-      - Return ONLY the raw commit message, no markdown formatting or backticks.
+      GOAL: Provide a readable, insightful, and sufficiently descriptive commit message. 
 
-      Changes:
+      INSTRUCTIONS:
+      - Use "Conventional Commits" (type: subject).
+      - Types: feat, fix, refactor, chore, docs, style, test, ci, build.
+      - Subject: Summarize the change clearly. Do not over-summarize; provide enough context to understand WHAT changed and WHY.
+      - Body (Optional): If the changes are significant, add a short body (1-2 sentences) after a blank line.
+      - Output: Return ONLY raw text. No markdown, no backticks, no meta-explanation.
+
+      CHANGES TO ANALYZE:
       ${diff}
     `;
 
     const response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
+        model: model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.5,
       }),
     });
 
@@ -136,10 +144,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       throw new Error(data.error.message);
     }
 
-    return (
-      data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ||
-      "Failed to generate."
-    );
+    return data.choices?.[0]?.message?.content?.trim() || "Failed to generate.";
   }
 
   private async commitChanges(message: string) {
@@ -219,7 +224,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       <body>
         <div class="container">
           <div>
-            <label>Gemini API Key</label>
+            <label>Groq API Key</label>
             <input type="password" id="apiKey" placeholder="Paste key here..." />
           </div>
 
@@ -245,17 +250,27 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
           // Restore state if available
           const previousState = vscode.getState();
-          if (previousState && previousState.apiKey) {
-              apiKeyInput.value = previousState.apiKey;
+          if (previousState) {
+              if (previousState.apiKey) {
+                  apiKeyInput.value = previousState.apiKey;
+              }
+              if (previousState.result) {
+                  resultInput.value = previousState.result;
+                  commitBtn.disabled = resultInput.value.trim().length === 0;
+              }
           }
 
           apiKeyInput.addEventListener('input', () => {
-             vscode.setState({ apiKey: apiKeyInput.value });
+             const state = vscode.getState() || {};
+             vscode.setState({ ...state, apiKey: apiKeyInput.value });
           });
 
           // Enable commit button only if text exists
           resultInput.addEventListener('input', () => {
-             commitBtn.disabled = resultInput.value.trim().length === 0;
+             const value = resultInput.value;
+             commitBtn.disabled = value.trim().length === 0;
+             const state = vscode.getState() || {};
+             vscode.setState({ ...state, result: value });
           });
 
           generateBtn.addEventListener('click', () => {
@@ -281,6 +296,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 loader.style.display = 'none';
                 resultInput.value = message.value;
                 commitBtn.disabled = false;
+                const stateResult = vscode.getState() || {};
+                vscode.setState({ ...stateResult, result: message.value });
                 break;
               case 'error':
                 loader.style.display = 'none';
@@ -290,6 +307,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               case 'success':
                 resultInput.value = '';
                 commitBtn.disabled = true;
+                const stateSuccess = vscode.getState() || {};
+                vscode.setState({ ...stateSuccess, result: '' });
                 break;
               case 'loading':
                 loader.style.display = 'block';
