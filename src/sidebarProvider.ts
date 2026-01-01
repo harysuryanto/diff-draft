@@ -35,11 +35,31 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     const gitExtension =
       vscode.extensions.getExtension<GitExtension>("vscode.git");
     if (!gitExtension) {
-      vscode.window.showErrorMessage("Git extension not loaded");
+      vscode.window.showErrorMessage("Git extension not found.");
       return;
     }
+
+    // Ensure the extension is activated before using it
+    if (!gitExtension.isActive) {
+      try {
+        await gitExtension.activate();
+      } catch (e) {
+        vscode.window.showErrorMessage("Failed to activate Git extension.");
+        return;
+      }
+    }
+
     const git = gitExtension.exports.getAPI(1);
-    return git.repositories[0]; // Simple approach: use first repo
+
+    // Check if any repositories are available
+    if (!git.repositories || git.repositories.length === 0) {
+      vscode.window.showErrorMessage(
+        "No Git repository found. Please open a folder with a Git repository."
+      );
+      return;
+    }
+
+    return git.repositories[0];
   }
 
   private async generateCommitMessage(apiKey: string) {
@@ -98,14 +118,24 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    // 4. Call Groq API
+    // 4. Check if diff is empty (e.g., binary files only)
+    if (!fullDiff.trim()) {
+      this._view?.webview.postMessage({
+        type: "error",
+        value: "No text diff available. Changes may be binary files only.",
+      });
+      return;
+    }
+
+    // 5. Call Groq API
     try {
-      const result = await this.callGroq(apiKey, fullDiff);
+      const result = await this.callGroq(finalApiKey, fullDiff);
       this._view?.webview.postMessage({ type: "result", value: result });
     } catch (error: any) {
       this._view?.webview.postMessage({
         type: "error",
-        value: "Groq API Error: " + error.message,
+        value:
+          "Groq API Error: " + (error.message || "Unknown error occurred."),
       });
     }
   }
@@ -144,25 +174,62 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }),
     });
 
+    // Check HTTP response status first
+    if (!response.ok) {
+      let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+      try {
+        const errorData: any = await response.json();
+        if (errorData.error?.message) {
+          errorMessage = errorData.error.message;
+        }
+      } catch {
+        // Ignore JSON parsing error, use HTTP status message
+      }
+      throw new Error(errorMessage);
+    }
+
     const data: any = await response.json();
 
     if (data.error) {
-      throw new Error(data.error.message);
+      throw new Error(data.error.message || "API returned an error.");
     }
 
-    return data.choices?.[0]?.message?.content?.trim() || "Failed to generate.";
+    const content = data.choices?.[0]?.message?.content?.trim();
+    if (!content) {
+      throw new Error("API returned empty response.");
+    }
+
+    return content;
   }
 
   private async commitChanges(message: string) {
+    // Validate commit message
+    if (!message || !message.trim()) {
+      vscode.window.showErrorMessage("Commit message cannot be empty.");
+      return;
+    }
+
     const repo = await this.getRepo();
-    if (repo) {
-      try {
-        await repo.commit(message);
-        vscode.window.showInformationMessage("Commit successful!");
-        this._view?.webview.postMessage({ type: "success" });
-      } catch (e: any) {
-        vscode.window.showErrorMessage("Commit failed: " + e.message);
-      }
+    if (!repo) {
+      return;
+    }
+
+    // Check if there are staged changes
+    if (!repo.state.indexChanges || repo.state.indexChanges.length === 0) {
+      vscode.window.showErrorMessage(
+        "No staged changes to commit. Please stage your changes first."
+      );
+      return;
+    }
+
+    try {
+      await repo.commit(message.trim());
+      vscode.window.showInformationMessage("Commit successful!");
+      this._view?.webview.postMessage({ type: "success" });
+    } catch (e: any) {
+      vscode.window.showErrorMessage(
+        "Commit failed: " + (e.message || "Unknown error occurred.")
+      );
     }
   }
 
@@ -289,6 +356,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
           if (isOverrideActive) {
             apiKeyContainer.style.display = 'none';
+            // Set a placeholder value so validation passes
+            apiKeyInput.value = '__OVERRIDE__';
           }
 
           function autoResize() {
@@ -325,11 +394,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
           generateBtn.addEventListener('click', () => {
             const key = apiKeyInput.value;
-            if(!key) {
+            if(!key && !isOverrideActive) {
                 resultInput.value = "Please enter an API Key first.";
                 autoResize();
                 return;
             }
+            generateBtn.disabled = true;
             loader.style.display = 'block';
             resultInput.value = '';
             autoResize();
@@ -345,6 +415,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             const message = event.data;
             switch (message.type) {
               case 'result':
+                generateBtn.disabled = false;
                 loader.style.display = 'none';
                 resultInput.value = message.value;
                 commitBtn.disabled = false;
@@ -353,9 +424,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 autoResize();
                 break;
               case 'error':
+                generateBtn.disabled = false;
                 loader.style.display = 'none';
                 resultInput.value = "Error: " + message.value;
-                commitBtn.disabled = resultInput.value.trim().length === 0;
+                // Always disable commit button on error - error messages should not be committed
+                commitBtn.disabled = true;
                 autoResize();
                 break;
               case 'success':
