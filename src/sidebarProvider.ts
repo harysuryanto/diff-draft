@@ -43,7 +43,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private async generateCommitMessage(apiKey: string) {
-    if (!apiKey) {
+    const overrideKey = process.env.OVERRIDE_MODEL_API_KEY;
+    const finalApiKey = overrideKey?.trim() ? overrideKey : apiKey;
+
+    if (!finalApiKey) {
       this._view?.webview.postMessage({
         type: "error",
         value: "Please enter a Groq API Key.",
@@ -52,7 +55,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
 
     const repo = await this.getRepo();
-    if (!repo) return;
+    if (!repo) {
+      return;
+    }
 
     // 1. Check for staged changes first
     let changes = repo.state.indexChanges;
@@ -115,10 +120,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       GOAL: Provide a readable, insightful, and sufficiently descriptive commit message. 
 
       INSTRUCTIONS:
-      - Use "Conventional Commits" (type: subject).
+      - Use "Conventional Commits" (<type>(<scope>): <subject>).
       - Types: feat, fix, refactor, chore, docs, style, test, ci, build.
+      - Scope: The scope of the change (e.g., "lang", "navbar", "profile", "auth").
       - Subject: Summarize the change clearly. Do not over-summarize; provide enough context to understand WHAT changed and WHY.
-      - Body (Optional): If the changes are significant, add a short body (1-2 sentences) after a blank line.
+      - Body (Optional): If the changes are significant, add a short body (1-2 sentences) after a blank line. Use bullet points for lists.
       - Output: Return ONLY raw text. No markdown, no backticks, no meta-explanation.
 
       CHANGES TO ANALYZE:
@@ -173,68 +179,96 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             background-color: var(--vscode-sideBar-background);
             color: var(--vscode-foreground);
             padding: 10px;
+            font-size: var(--vscode-font-size);
           }
           .container {
             display: flex;
             flex-direction: column;
             gap: 12px;
           }
+          .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+          }
           label {
-            font-size: 12px;
-            font-weight: bold;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
             opacity: 0.8;
+            color: var(--vscode-sideBarTitle-foreground);
           }
           input, textarea {
             background: var(--vscode-input-background);
             color: var(--vscode-input-foreground);
             border: 1px solid var(--vscode-input-border);
-            padding: 6px;
+            padding: 6px 8px;
             border-radius: 2px;
             width: 100%;
             box-sizing: border-box;
+            font-family: var(--vscode-editor-font-family, var(--vscode-font-family));
+            font-size: var(--vscode-font-size);
+          }
+          input:focus, textarea:focus {
+            outline: 1px solid var(--vscode-focusBorder);
+            border-color: var(--vscode-focusBorder);
           }
           textarea {
-            resize: vertical;
-            min-height: 80px;
+            resize: none;
+            min-height: 100px;
+            overflow: hidden;
+            line-height: 1.4;
           }
           button {
             background: var(--vscode-button-background);
             color: var(--vscode-button-foreground);
             border: none;
-            padding: 8px;
+            padding: 6px 14px;
             cursor: pointer;
             width: 100%;
-            font-weight: bold;
+            border-radius: 2px;
+            font-size: var(--vscode-font-size);
           }
           button:hover {
             background: var(--vscode-button-hoverBackground);
           }
+          button:active {
+            opacity: 0.8;
+          }
           button:disabled {
-            opacity: 0.5;
+            opacity: 0.4;
             cursor: not-allowed;
+          }
+          #generateBtn {
+            background: var(--vscode-button-secondaryBackground, #3a3d41);
+            color: var(--vscode-button-secondaryForeground, #ffffff);
+          }
+          #generateBtn:hover {
+            background: var(--vscode-button-secondaryHoverBackground, #45494e);
           }
           .loader {
             text-align: center;
             display: none;
-            font-size: 12px;
-            margin-top: 5px;
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+            margin-top: -4px;
           }
         </style>
       </head>
       <body>
         <div class="container">
-          <div>
+          <div class="input-group" id="apiKeyContainer">
             <label>Groq API Key</label>
-            <input type="password" id="apiKey" placeholder="Paste key here..." />
+            <input type="password" id="apiKey" placeholder="Enter your API key..." />
           </div>
 
           <button id="generateBtn">✨ Generate Commit Message</button>
           
-          <div class="loader" id="loader">Thinking...</div>
+          <div class="loader" id="loader">Processing changes with AI...</div>
 
-          <div>
+          <div class="input-group">
             <label>Commit Message</label>
-            <textarea id="result"></textarea>
+            <textarea id="result" placeholder="AI-generated message will appear here..."></textarea>
           </div>
 
           <button id="commitBtn" disabled>Commit</button>
@@ -248,6 +282,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           const resultInput = document.getElementById('result');
           const loader = document.getElementById('loader');
 
+          const apiKeyContainer = document.getElementById('apiKeyContainer');
+          const isOverrideActive = ${
+            process.env.OVERRIDE_MODEL_API_KEY?.trim() ? "true" : "false"
+          };
+
+          if (isOverrideActive) {
+            apiKeyContainer.style.display = 'none';
+          }
+
+          function autoResize() {
+            resultInput.style.height = 'auto';
+            resultInput.style.height = (resultInput.scrollHeight) + 'px';
+          }
+
           // Restore state if available
           const previousState = vscode.getState();
           if (previousState) {
@@ -257,6 +305,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               if (previousState.result) {
                   resultInput.value = previousState.result;
                   commitBtn.disabled = resultInput.value.trim().length === 0;
+                  setTimeout(autoResize, 0);
               }
           }
 
@@ -271,16 +320,19 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
              commitBtn.disabled = value.trim().length === 0;
              const state = vscode.getState() || {};
              vscode.setState({ ...state, result: value });
+             autoResize();
           });
 
           generateBtn.addEventListener('click', () => {
             const key = apiKeyInput.value;
             if(!key) {
                 resultInput.value = "Please enter an API Key first.";
+                autoResize();
                 return;
             }
             loader.style.display = 'block';
             resultInput.value = '';
+            autoResize();
             commitBtn.disabled = true;
             vscode.postMessage({ type: 'generate', apiKey: key });
           });
@@ -298,17 +350,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 commitBtn.disabled = false;
                 const stateResult = vscode.getState() || {};
                 vscode.setState({ ...stateResult, result: message.value });
+                autoResize();
                 break;
               case 'error':
                 loader.style.display = 'none';
                 resultInput.value = "Error: " + message.value;
                 commitBtn.disabled = resultInput.value.trim().length === 0;
+                autoResize();
                 break;
               case 'success':
                 resultInput.value = '';
                 commitBtn.disabled = true;
                 const stateSuccess = vscode.getState() || {};
                 vscode.setState({ ...stateSuccess, result: '' });
+                autoResize();
                 break;
               case 'loading':
                 loader.style.display = 'block';
