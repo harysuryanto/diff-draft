@@ -1,11 +1,16 @@
 import * as vscode from "vscode";
 import { GitExtension, Repository } from "./git";
 
+const API_KEY_SECRET_KEY = "diffDraft.groqApiKey";
+
 export class SidebarProvider implements vscode.WebviewViewProvider {
   _view?: vscode.WebviewView;
   private _iconIndex = 0; // Counter for sequential icon rotation
 
-  constructor(private readonly _extensionUri: vscode.Uri) {}
+  constructor(
+    private readonly _extensionUri: vscode.Uri,
+    private readonly _secrets: vscode.SecretStorage
+  ) {}
 
   public resolveWebviewView(webviewView: vscode.WebviewView) {
     this._view = webviewView;
@@ -96,14 +101,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private async getStoredApiKey(): Promise<string | undefined> {
-    // Use VS Code's secrets storage via global state as a fallback
-    // The webview saves the key in its state, but we can't access that directly
-    // For now, we'll prompt if no override key is set
-    return undefined;
+    try {
+      const key = await this._secrets.get(API_KEY_SECRET_KEY);
+      return key?.trim() || undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private async storeApiKey(key: string): Promise<void> {
-    // Placeholder for future secure storage implementation
+    try {
+      const trimmedKey = key.trim();
+      if (trimmedKey) {
+        await this._secrets.store(API_KEY_SECRET_KEY, trimmedKey);
+      }
+    } catch (error) {
+      console.error("Failed to store API key:", error);
+    }
   }
 
   private async generateCommitMessageWithKey(apiKey: string): Promise<void> {

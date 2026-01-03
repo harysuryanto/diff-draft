@@ -7,7 +7,10 @@ export function activate(context: vscode.ExtensionContext) {
   // Load .env file from the extension's root directory
   dotenv.config({ path: path.join(context.extensionPath, ".env") });
 
-  const sidebarProvider = new SidebarProvider(context.extensionUri);
+  const sidebarProvider = new SidebarProvider(
+    context.extensionUri,
+    context.secrets
+  );
 
   // SIDEBAR DEACTIVATED - Keeping code for future reference
   // To re-enable, uncomment this block and add viewsContainers/views to package.json
