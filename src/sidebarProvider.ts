@@ -3,9 +3,18 @@ import { GitExtension, Repository } from "./git";
 
 const API_KEY_SECRET_KEY = "diffDraft.groqApiKey";
 
+// Custom error class for authentication failures
+class ApiKeyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ApiKeyError";
+  }
+}
+
 export class SidebarProvider implements vscode.WebviewViewProvider {
   _view?: vscode.WebviewView;
   private _iconIndex = 0; // Counter for sequential icon rotation
+  private _isGenerating = false; // Debounce flag to prevent spam clicks
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -20,7 +29,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       localResourceRoots: [this._extensionUri],
     };
 
-    webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+    // Check if override key is set at runtime
+    const hasOverrideKey = !!process.env.OVERRIDE_MODEL_API_KEY?.trim();
+    webviewView.webview.html = this._getHtmlForWebview(
+      webviewView.webview,
+      hasOverrideKey
+    );
 
     // Listen for messages from the UI
     webviewView.webview.onDidReceiveMessage(async (data) => {
@@ -73,9 +87,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
    * Called from the SCM title bar button command.
    */
   public async generateCommitMessageForSCM(): Promise<void> {
-    const overrideKey = process.env.OVERRIDE_MODEL_API_KEY;
+    // Debounce: prevent multiple simultaneous generations
+    if (this._isGenerating) {
+      return;
+    }
+
+    const overrideKey = process.env.OVERRIDE_MODEL_API_KEY?.trim();
     const storedKey = await this.getStoredApiKey();
-    const apiKey = overrideKey?.trim() ? overrideKey : storedKey;
+    const apiKey = overrideKey || storedKey;
 
     if (!apiKey) {
       const inputKey = await vscode.window.showInputBox({
@@ -83,9 +102,22 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         password: true,
         placeHolder: "gsk_...",
         ignoreFocusOut: true,
+        validateInput: (value) => {
+          const trimmed = value.trim();
+          if (!trimmed) {
+            return "API key cannot be empty.";
+          }
+          if (!trimmed.startsWith("gsk_")) {
+            return "Invalid API key format. Groq API keys start with 'gsk_'.";
+          }
+          if (trimmed.length < 20) {
+            return "API key appears too short.";
+          }
+          return null; // Valid
+        },
       });
 
-      if (!inputKey) {
+      if (!inputKey?.trim()) {
         vscode.window.showWarningMessage(
           "API key is required to generate commit message."
         );
@@ -93,8 +125,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
 
       // Store the API key for future use
-      await this.storeApiKey(inputKey);
-      return this.generateCommitMessageWithKey(inputKey);
+      await this.storeApiKey(inputKey.trim());
+      return this.generateCommitMessageWithKey(inputKey.trim());
     }
 
     return this.generateCommitMessageWithKey(apiKey);
@@ -120,7 +152,22 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private async clearStoredApiKey(): Promise<void> {
+    try {
+      await this._secrets.delete(API_KEY_SECRET_KEY);
+    } catch (error) {
+      console.error("Failed to clear API key:", error);
+    }
+  }
+
   private async generateCommitMessageWithKey(apiKey: string): Promise<void> {
+    // Validate API key
+    const trimmedKey = apiKey.trim();
+    if (!trimmedKey) {
+      vscode.window.showErrorMessage("API key cannot be empty.");
+      return;
+    }
+
     const repo = await this.getRepo();
     if (!repo) {
       return;
@@ -142,12 +189,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    // Set debounce flag
+    this._isGenerating = true;
+
     // Sequential icon selection (0-4): watch → flame → loading → wand → symbol-color
     const iconCount = 5;
     const currentIconIndex = this._iconIndex;
     this._iconIndex = (this._iconIndex + 1) % iconCount; // Rotate for next time
 
-    // Set generating state with random icon - hides sparkle, shows random icon (disabled)
+    // Track whether we succeeded (to avoid resetting state in finally block)
+    let succeeded = false;
+
+    // Set generating state with icon - hides sparkle, shows icon (disabled)
     await vscode.commands.executeCommand(
       "setContext",
       "diffDraft.isGenerating",
@@ -182,46 +235,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
 
       // Call Groq API
-      try {
-        const result = await this.callGroq(apiKey, fullDiff);
-        // Insert the result into the SCM input box
-        repo.inputBox.value = result;
+      const result = await this.callGroq(trimmedKey, fullDiff);
 
-        // Show success state (check icon) for 2 seconds
-        await vscode.commands.executeCommand(
-          "setContext",
-          "diffDraft.isGenerating",
-          false
-        );
-        await vscode.commands.executeCommand(
-          "setContext",
-          "diffDraft.generatingIcon",
-          -1
-        );
-        await vscode.commands.executeCommand(
-          "setContext",
-          "diffDraft.isSuccess",
-          true
-        );
+      // Insert the result into the SCM input box
+      repo.inputBox.value = result;
+      succeeded = true;
 
-        // After 2 seconds, hide success icon and show sparkle again
-        setTimeout(async () => {
-          await vscode.commands.executeCommand(
-            "setContext",
-            "diffDraft.isSuccess",
-            false
-          );
-        }, 2000);
-
-        return; // Skip finally block's reset since we handled it here
-      } catch (error: any) {
-        vscode.window.showErrorMessage(
-          "Groq API Error: " + (error.message || "Unknown error occurred.")
-        );
-      }
-    } finally {
-      // Reset generating state - hides all generating icons, shows sparkle again
-      // (only runs on error or early return, not on success)
+      // Show success state (check icon) for 2 seconds
       await vscode.commands.executeCommand(
         "setContext",
         "diffDraft.isGenerating",
@@ -232,12 +252,66 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         "diffDraft.generatingIcon",
         -1
       );
+      await vscode.commands.executeCommand(
+        "setContext",
+        "diffDraft.isSuccess",
+        true
+      );
+
+      // After 2 seconds, hide success icon and show sparkle again
+      setTimeout(async () => {
+        await vscode.commands.executeCommand(
+          "setContext",
+          "diffDraft.isSuccess",
+          false
+        );
+      }, 2000);
+    } catch (error: any) {
+      // Check if it's an authentication error (invalid API key)
+      if (error instanceof ApiKeyError) {
+        // Clear the invalid stored key
+        await this.clearStoredApiKey();
+
+        // Show error and prompt for new key
+        const retry = await vscode.window.showErrorMessage(
+          "Invalid API key. The stored key has been cleared.",
+          "Enter New Key"
+        );
+
+        if (retry === "Enter New Key") {
+          // Recursively call the parent method to prompt for a new key
+          return this.generateCommitMessageForSCM();
+        }
+      } else {
+        vscode.window.showErrorMessage(
+          "Groq API Error: " + (error.message || "Unknown error occurred.")
+        );
+      }
+    } finally {
+      // Reset debounce flag
+      this._isGenerating = false;
+
+      // Only reset generating state if we didn't succeed
+      // (on success, we show the success icon instead)
+      if (!succeeded) {
+        await vscode.commands.executeCommand(
+          "setContext",
+          "diffDraft.isGenerating",
+          false
+        );
+        await vscode.commands.executeCommand(
+          "setContext",
+          "diffDraft.generatingIcon",
+          -1
+        );
+      }
     }
   }
 
   private async generateCommitMessage(apiKey: string) {
-    const overrideKey = process.env.OVERRIDE_MODEL_API_KEY;
-    const finalApiKey = overrideKey?.trim() ? overrideKey : apiKey;
+    const overrideKey = process.env.OVERRIDE_MODEL_API_KEY?.trim();
+    const trimmedInputKey = apiKey?.trim();
+    const finalApiKey = overrideKey || trimmedInputKey;
 
     if (!finalApiKey) {
       this._view?.webview.postMessage({
@@ -358,6 +432,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       } catch {
         // Ignore JSON parsing error, use HTTP status message
       }
+
+      // Throw ApiKeyError for authentication failures
+      if (response.status === 401 || response.status === 403) {
+        throw new ApiKeyError(errorMessage);
+      }
+
       throw new Error(errorMessage);
     }
 
@@ -407,7 +487,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   // --- UI HTML ---
-  private _getHtmlForWebview(webview: vscode.Webview) {
+  private _getHtmlForWebview(webview: vscode.Webview, hasOverrideKey: boolean) {
     return `<!DOCTYPE html>
       <html lang="en">
       <head>
@@ -523,14 +603,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           const loader = document.getElementById('loader');
 
           const apiKeyContainer = document.getElementById('apiKeyContainer');
-          const isOverrideActive = ${
-            process.env.OVERRIDE_MODEL_API_KEY?.trim() ? "true" : "false"
-          };
+          const isOverrideActive = ${hasOverrideKey ? "true" : "false"};
 
           if (isOverrideActive) {
             apiKeyContainer.style.display = 'none';
-            // Set a placeholder value so validation passes
-            apiKeyInput.value = '__OVERRIDE__';
           }
 
           function autoResize() {
@@ -538,11 +614,21 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             resultInput.style.height = (resultInput.scrollHeight) + 'px';
           }
 
-          // Restore state if available
+          function validateApiKey(key) {
+            const trimmed = key.trim();
+            if (!trimmed) return "Please enter an API Key first.";
+            if (!trimmed.startsWith('gsk_')) return "Invalid API key format. Groq keys start with 'gsk_'.";
+            if (trimmed.length < 20) return "API key appears too short.";
+            return null; // Valid
+          }
+
+          // Restore state if available (only result, not API key for security)
           const previousState = vscode.getState();
           if (previousState) {
-              if (previousState.apiKey) {
-                  apiKeyInput.value = previousState.apiKey;
+              // Note: API key is stored in SecretStorage, not webview state
+              if (previousState.hasApiKey) {
+                  // Show placeholder to indicate a key exists
+                  apiKeyInput.placeholder = '••••••••••••••••';
               }
               if (previousState.result) {
                   resultInput.value = previousState.result;
@@ -551,9 +637,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               }
           }
 
+          // Track that user has entered a key (for UX, not the key itself)
           apiKeyInput.addEventListener('input', () => {
              const state = vscode.getState() || {};
-             vscode.setState({ ...state, apiKey: apiKeyInput.value });
+             vscode.setState({ ...state, hasApiKey: !!apiKeyInput.value.trim() });
           });
 
           // Enable commit button only if text exists
@@ -567,17 +654,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
           generateBtn.addEventListener('click', () => {
             const key = apiKeyInput.value;
-            if(!key && !isOverrideActive) {
-                resultInput.value = "Please enter an API Key first.";
+            
+            // Skip validation if override is active
+            if (!isOverrideActive) {
+              const validationError = validateApiKey(key);
+              if (validationError) {
+                resultInput.value = validationError;
                 autoResize();
                 return;
+              }
             }
+            
             generateBtn.disabled = true;
             loader.style.display = 'block';
             resultInput.value = '';
             autoResize();
             commitBtn.disabled = true;
-            vscode.postMessage({ type: 'generate', apiKey: key });
+            vscode.postMessage({ type: 'generate', apiKey: isOverrideActive ? '' : key.trim() });
           });
 
           commitBtn.addEventListener('click', () => {
