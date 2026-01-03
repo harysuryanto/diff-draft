@@ -2,7 +2,7 @@
   "name": "diff-draft",
   "displayName": "DiffDraft",
   "description": "Generates intelligent commit message drafts from your Git diffs using AI.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "harysuryanto",
   "repository": {
     "type": "git",
@@ -25,6 +25,48 @@
         "title": "Generate Commit Message",
         "icon": "$(sparkle)",
         "category": "DiffDraft"
+      },
+      {
+        "command": "diffDraft.generating.0",
+        "title": "Generating...",
+        "icon": "$(clock)",
+        "category": "DiffDraft",
+        "enablement": "false"
+      },
+      {
+        "command": "diffDraft.generating.1",
+        "title": "Generating...",
+        "icon": "$(flame)",
+        "category": "DiffDraft",
+        "enablement": "false"
+      },
+      {
+        "command": "diffDraft.generating.2",
+        "title": "Generating...",
+        "icon": "$(loading~spin)",
+        "category": "DiffDraft",
+        "enablement": "false"
+      },
+      {
+        "command": "diffDraft.generating.3",
+        "title": "Generating...",
+        "icon": "$(wand)",
+        "category": "DiffDraft",
+        "enablement": "false"
+      },
+      {
+        "command": "diffDraft.generating.4",
+        "title": "Generating...",
+        "icon": "$(symbol-color)",
+        "category": "DiffDraft",
+        "enablement": "false"
+      },
+      {
+        "command": "diffDraft.success",
+        "title": "Done!",
+        "icon": "$(thumbsup)",
+        "category": "DiffDraft",
+        "enablement": "false"
       }
     ],
     "menus": {
@@ -32,7 +74,37 @@
         {
           "command": "diffDraft.generateCommitMessage",
           "group": "navigation",
-          "when": "scmProvider == git"
+          "when": "scmProvider == git && !diffDraft.isGenerating && !diffDraft.isSuccess"
+        },
+        {
+          "command": "diffDraft.success",
+          "group": "navigation",
+          "when": "scmProvider == git && diffDraft.isSuccess"
+        },
+        {
+          "command": "diffDraft.generating.0",
+          "group": "navigation",
+          "when": "scmProvider == git && diffDraft.generatingIcon == 0"
+        },
+        {
+          "command": "diffDraft.generating.1",
+          "group": "navigation",
+          "when": "scmProvider == git && diffDraft.generatingIcon == 1"
+        },
+        {
+          "command": "diffDraft.generating.2",
+          "group": "navigation",
+          "when": "scmProvider == git && diffDraft.generatingIcon == 2"
+        },
+        {
+          "command": "diffDraft.generating.3",
+          "group": "navigation",
+          "when": "scmProvider == git && diffDraft.generatingIcon == 3"
+        },
+        {
+          "command": "diffDraft.generating.4",
+          "group": "navigation",
+          "when": "scmProvider == git && diffDraft.generatingIcon == 4"
         }
       ]
     }

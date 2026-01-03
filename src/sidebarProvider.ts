@@ -3,6 +3,7 @@ import { GitExtension, Repository } from "./git";
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
   _view?: vscode.WebviewView;
+  private _iconIndex = 0; // Counter for sequential icon rotation
 
   constructor(private readonly _extensionUri: vscode.Uri) {}
 
@@ -127,48 +128,97 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    // Use progress indicator
-    await vscode.window.withProgress(
-      {
-        location: vscode.ProgressLocation.Notification,
-        title: "DiffDraft: Generating commit message...",
-        cancellable: false,
-      },
-      async () => {
-        // Collect diffs
-        let fullDiff = "";
-        try {
-          for (const change of changes) {
-            const diff = isStaged
-              ? await repo.diffIndexWithHEAD(change.uri.fsPath)
-              : await repo.diffWithHEAD(change.uri.fsPath);
-            fullDiff += `\n--- File: ${change.uri.fsPath} ---\n${diff}`;
-          }
-        } catch (e) {
-          vscode.window.showErrorMessage("Error reading git diffs.");
-          return;
-        }
+    // Sequential icon selection (0-4): watch → flame → loading → wand → symbol-color
+    const iconCount = 5;
+    const currentIconIndex = this._iconIndex;
+    this._iconIndex = (this._iconIndex + 1) % iconCount; // Rotate for next time
 
-        if (!fullDiff.trim()) {
-          vscode.window.showWarningMessage(
-            "No text diff available. Changes may be binary files only."
-          );
-          return;
-        }
-
-        // Call Groq API
-        try {
-          const result = await this.callGroq(apiKey, fullDiff);
-          // Insert the result into the SCM input box
-          repo.inputBox.value = result;
-          vscode.window.showInformationMessage("Commit message generated!");
-        } catch (error: any) {
-          vscode.window.showErrorMessage(
-            "Groq API Error: " + (error.message || "Unknown error occurred.")
-          );
-        }
-      }
+    // Set generating state with random icon - hides sparkle, shows random icon (disabled)
+    await vscode.commands.executeCommand(
+      "setContext",
+      "diffDraft.isGenerating",
+      true
     );
+    await vscode.commands.executeCommand(
+      "setContext",
+      "diffDraft.generatingIcon",
+      currentIconIndex
+    );
+
+    try {
+      // Collect diffs
+      let fullDiff = "";
+      try {
+        for (const change of changes) {
+          const diff = isStaged
+            ? await repo.diffIndexWithHEAD(change.uri.fsPath)
+            : await repo.diffWithHEAD(change.uri.fsPath);
+          fullDiff += `\n--- File: ${change.uri.fsPath} ---\n${diff}`;
+        }
+      } catch (e) {
+        vscode.window.showErrorMessage("Error reading git diffs.");
+        return;
+      }
+
+      if (!fullDiff.trim()) {
+        vscode.window.showErrorMessage(
+          "No text diff available. Changes may be binary files only."
+        );
+        return;
+      }
+
+      // Call Groq API
+      try {
+        const result = await this.callGroq(apiKey, fullDiff);
+        // Insert the result into the SCM input box
+        repo.inputBox.value = result;
+
+        // Show success state (check icon) for 2 seconds
+        await vscode.commands.executeCommand(
+          "setContext",
+          "diffDraft.isGenerating",
+          false
+        );
+        await vscode.commands.executeCommand(
+          "setContext",
+          "diffDraft.generatingIcon",
+          -1
+        );
+        await vscode.commands.executeCommand(
+          "setContext",
+          "diffDraft.isSuccess",
+          true
+        );
+
+        // After 2 seconds, hide success icon and show sparkle again
+        setTimeout(async () => {
+          await vscode.commands.executeCommand(
+            "setContext",
+            "diffDraft.isSuccess",
+            false
+          );
+        }, 2000);
+
+        return; // Skip finally block's reset since we handled it here
+      } catch (error: any) {
+        vscode.window.showErrorMessage(
+          "Groq API Error: " + (error.message || "Unknown error occurred.")
+        );
+      }
+    } finally {
+      // Reset generating state - hides all generating icons, shows sparkle again
+      // (only runs on error or early return, not on success)
+      await vscode.commands.executeCommand(
+        "setContext",
+        "diffDraft.isGenerating",
+        false
+      );
+      await vscode.commands.executeCommand(
+        "setContext",
+        "diffDraft.generatingIcon",
+        -1
+      );
+    }
   }
 
   private async generateCommitMessage(apiKey: string) {
