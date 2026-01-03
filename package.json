@@ -35,25 +35,6 @@
           "when": "scmProvider == git"
         }
       ]
-    },
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "diff-draft-view",
-          "title": "DiffDraft",
-          "icon": "$(edit)"
-        }
-      ]
-    },
-    "views": {
-      "diff-draft-view": [
-        {
-          "type": "webview",
-          "id": "geminiCommit.view",
-          "name": "Draft Commit",
-          "icon": "$(git-commit)"
-        }
-      ]
     }
   },
   "scripts": {

@@ -9,12 +9,14 @@ export function activate(context: vscode.ExtensionContext) {
 
   const sidebarProvider = new SidebarProvider(context.extensionUri);
 
-  context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(
-      "geminiCommit.view",
-      sidebarProvider
-    )
-  );
+  // SIDEBAR DEACTIVATED - Keeping code for future reference
+  // To re-enable, uncomment this block and add viewsContainers/views to package.json
+  // context.subscriptions.push(
+  //   vscode.window.registerWebviewViewProvider(
+  //     "geminiCommit.view",
+  //     sidebarProvider
+  //   )
+  // );
 
   // Register the SCM title bar command
   context.subscriptions.push(
