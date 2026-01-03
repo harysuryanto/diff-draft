@@ -62,6 +62,115 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     return git.repositories[0];
   }
 
+  /**
+   * Generate commit message and insert it into the SCM input box.
+   * Called from the SCM title bar button command.
+   */
+  public async generateCommitMessageForSCM(): Promise<void> {
+    const overrideKey = process.env.OVERRIDE_MODEL_API_KEY;
+    const storedKey = await this.getStoredApiKey();
+    const apiKey = overrideKey?.trim() ? overrideKey : storedKey;
+
+    if (!apiKey) {
+      const inputKey = await vscode.window.showInputBox({
+        prompt: "Enter your Groq API Key",
+        password: true,
+        placeHolder: "gsk_...",
+        ignoreFocusOut: true,
+      });
+
+      if (!inputKey) {
+        vscode.window.showWarningMessage(
+          "API key is required to generate commit message."
+        );
+        return;
+      }
+
+      // Store the API key for future use
+      await this.storeApiKey(inputKey);
+      return this.generateCommitMessageWithKey(inputKey);
+    }
+
+    return this.generateCommitMessageWithKey(apiKey);
+  }
+
+  private async getStoredApiKey(): Promise<string | undefined> {
+    // Use VS Code's secrets storage via global state as a fallback
+    // The webview saves the key in its state, but we can't access that directly
+    // For now, we'll prompt if no override key is set
+    return undefined;
+  }
+
+  private async storeApiKey(key: string): Promise<void> {
+    // Placeholder for future secure storage implementation
+  }
+
+  private async generateCommitMessageWithKey(apiKey: string): Promise<void> {
+    const repo = await this.getRepo();
+    if (!repo) {
+      return;
+    }
+
+    // Check for staged changes first, then working tree changes
+    let changes = repo.state.indexChanges;
+    let isStaged = true;
+
+    if (changes.length === 0) {
+      changes = repo.state.workingTreeChanges;
+      isStaged = false;
+    }
+
+    if (changes.length === 0) {
+      vscode.window.showWarningMessage(
+        "No changes detected (staged or working tree)."
+      );
+      return;
+    }
+
+    // Use progress indicator
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: "DiffDraft: Generating commit message...",
+        cancellable: false,
+      },
+      async () => {
+        // Collect diffs
+        let fullDiff = "";
+        try {
+          for (const change of changes) {
+            const diff = isStaged
+              ? await repo.diffIndexWithHEAD(change.uri.fsPath)
+              : await repo.diffWithHEAD(change.uri.fsPath);
+            fullDiff += `\n--- File: ${change.uri.fsPath} ---\n${diff}`;
+          }
+        } catch (e) {
+          vscode.window.showErrorMessage("Error reading git diffs.");
+          return;
+        }
+
+        if (!fullDiff.trim()) {
+          vscode.window.showWarningMessage(
+            "No text diff available. Changes may be binary files only."
+          );
+          return;
+        }
+
+        // Call Groq API
+        try {
+          const result = await this.callGroq(apiKey, fullDiff);
+          // Insert the result into the SCM input box
+          repo.inputBox.value = result;
+          vscode.window.showInformationMessage("Commit message generated!");
+        } catch (error: any) {
+          vscode.window.showErrorMessage(
+            "Groq API Error: " + (error.message || "Unknown error occurred.")
+          );
+        }
+      }
+    );
+  }
+
   private async generateCommitMessage(apiKey: string) {
     const overrideKey = process.env.OVERRIDE_MODEL_API_KEY;
     const finalApiKey = overrideKey?.trim() ? overrideKey : apiKey;

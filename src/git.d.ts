@@ -12,9 +12,15 @@ export interface GitAPI {
 
 export interface Repository {
   state: RepositoryState;
+  inputBox: SourceControlInputBox;
   commit(message: string): Promise<void>;
   diffWithHEAD(path: string): Promise<string>; // Working tree vs HEAD
   diffIndexWithHEAD(path: string): Promise<string>; // Staged vs HEAD
+}
+
+export interface SourceControlInputBox {
+  value: string;
+  placeholder: string;
 }
 
 export interface RepositoryState {

@@ -19,6 +19,23 @@
   "activationEvents": [],
   "main": "./dist/extension.js",
   "contributes": {
+    "commands": [
+      {
+        "command": "diffDraft.generateCommitMessage",
+        "title": "Generate Commit Message",
+        "icon": "$(sparkle)",
+        "category": "DiffDraft"
+      }
+    ],
+    "menus": {
+      "scm/title": [
+        {
+          "command": "diffDraft.generateCommitMessage",
+          "group": "navigation",
+          "when": "scmProvider == git"
+        }
+      ]
+    },
     "viewsContainers": {
       "activitybar": [
         {

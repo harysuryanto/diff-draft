@@ -15,6 +15,16 @@ export function activate(context: vscode.ExtensionContext) {
       sidebarProvider
     )
   );
+
+  // Register the SCM title bar command
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "diffDraft.generateCommitMessage",
+      async () => {
+        await sidebarProvider.generateCommitMessageForSCM();
+      }
+    )
+  );
 }
 
 export function deactivate() {}
