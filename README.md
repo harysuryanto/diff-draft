@@ -29,7 +29,7 @@
 
 You can optionally set an environment variable to override the API key:
 
-- `OVERRIDE_MODEL_API_KEY`: If set, this key will be used instead of the stored key
+- `OVERRIDE_MODEL_API_KEYS`: If set, these key(s) will be used instead of the stored key(s). Supports multiple keys separated by commas for rate-limit fallback (e.g. `gsk_key1,gsk_key2`)
 
 ## Release Notes
 

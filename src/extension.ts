@@ -7,6 +7,16 @@ export function activate(context: vscode.ExtensionContext) {
   // Load .env file from the extension's root directory
   dotenv.config({ path: path.join(context.extensionPath, ".env") });
 
+  // Log OVERRIDE_MODEL_API_KEYS on startup so it's visible in the Debug Console
+  const overrideRaw = process.env.OVERRIDE_MODEL_API_KEYS?.trim();
+  if (overrideRaw) {
+    const overrideKeys = overrideRaw.split(",").map((k) => k.trim()).filter(Boolean);
+    console.log(
+      `[diff-draft] OVERRIDE_MODEL_API_KEYS active: ${overrideKeys.length} key(s) — ` +
+      overrideKeys.map((k) => k.substring(0, 8) + "...").join(", ")
+    );
+  }
+
   const sidebarProvider = new SidebarProvider(
     context.extensionUri,
     context.secrets

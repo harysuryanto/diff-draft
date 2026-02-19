@@ -11,6 +11,14 @@ class ApiKeyError extends Error {
   }
 }
 
+// Custom error class for rate-limit errors
+class RateLimitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RateLimitError";
+  }
+}
+
 export class SidebarProvider implements vscode.WebviewViewProvider {
   _view?: vscode.WebviewView;
   private _iconIndex = 0; // Counter for sequential icon rotation
@@ -30,7 +38,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     };
 
     // Check if override key is set at runtime
-    const hasOverrideKey = !!process.env.OVERRIDE_MODEL_API_KEY?.trim();
+    const hasOverrideKey = !!process.env.OVERRIDE_MODEL_API_KEYS?.trim();
     webviewView.webview.html = this._getHtmlForWebview(
       webviewView.webview,
       hasOverrideKey
@@ -92,55 +100,76 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    const overrideKey = process.env.OVERRIDE_MODEL_API_KEY?.trim();
-    const storedKey = await this.getStoredApiKey();
-    const apiKey = overrideKey || storedKey;
+    const overrideRaw = process.env.OVERRIDE_MODEL_API_KEYS?.trim();
+    const overrideKeys = overrideRaw
+      ? overrideRaw.split(",").map((k) => k.trim()).filter(Boolean)
+      : [];
+    const storedKeys = await this.getStoredApiKeys();
+    const apiKeys: string[] = overrideKeys.length > 0 ? overrideKeys : storedKeys;
 
-    if (!apiKey) {
-      const inputKey = await vscode.window.showInputBox({
-        prompt: "Enter your Groq API Key",
+    if (apiKeys.length === 0) {
+      const inputRaw = await vscode.window.showInputBox({
+        prompt: "Enter your Groq API Key(s) — separate multiple keys with commas",
         password: true,
-        placeHolder: "gsk_...",
+        placeHolder: "gsk_key1, gsk_key2, ...",
         ignoreFocusOut: true,
         validateInput: (value) => {
-          const trimmed = value.trim();
-          if (!trimmed) {
+          const keys = value.split(",").map((k) => k.trim()).filter(Boolean);
+          if (keys.length === 0) {
             return "API key cannot be empty.";
           }
-          if (!trimmed.startsWith("gsk_")) {
-            return "Invalid API key format. Groq API keys start with 'gsk_'.";
-          }
-          if (trimmed.length < 20) {
-            return "API key appears too short.";
+          for (const k of keys) {
+            if (!k.startsWith("gsk_")) {
+              return `Invalid key format: "${k.substring(0, 10)}...". Groq keys start with 'gsk_'.`;
+            }
+            if (k.length < 20) {
+              return `API key "${k.substring(0, 10)}..." appears too short.`;
+            }
           }
           return null; // Valid
         },
       });
 
-      if (!inputKey?.trim()) {
+      if (!inputRaw?.trim()) {
         vscode.window.showWarningMessage(
           "API key is required to generate commit message."
         );
         return;
       }
 
-      // Store the API key for future use
-      await this.storeApiKey(inputKey.trim());
-      return this.generateCommitMessageWithKey(inputKey.trim());
+      // Store the comma-separated key(s) for future use
+      await this.storeApiKey(inputRaw.trim());
+      const parsedKeys = inputRaw
+        .split(",")
+        .map((k) => k.trim())
+        .filter(Boolean);
+      return this.generateCommitMessageWithKeys(parsedKeys);
     }
 
-    return this.generateCommitMessageWithKey(apiKey);
+    return this.generateCommitMessageWithKeys(apiKeys);
   }
 
-  private async getStoredApiKey(): Promise<string | undefined> {
+  /**
+   * Returns all stored API keys as an array (comma-separated storage).
+   */
+  private async getStoredApiKeys(): Promise<string[]> {
     try {
-      const key = await this._secrets.get(API_KEY_SECRET_KEY);
-      return key?.trim() || undefined;
+      const raw = await this._secrets.get(API_KEY_SECRET_KEY);
+      if (!raw?.trim()) {
+        return [];
+      }
+      return raw
+        .split(",")
+        .map((k) => k.trim())
+        .filter((k) => k.length > 0);
     } catch {
-      return undefined;
+      return [];
     }
   }
 
+  /**
+   * Stores the raw key string (may be comma-separated) as-is after trimming.
+   */
   private async storeApiKey(key: string): Promise<void> {
     try {
       const trimmedKey = key.trim();
@@ -160,10 +189,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async generateCommitMessageWithKey(apiKey: string): Promise<void> {
-    // Validate API key
-    const trimmedKey = apiKey.trim();
-    if (!trimmedKey) {
+  private async generateCommitMessageWithKeys(apiKeys: string[]): Promise<void> {
+    // Validate API keys
+    const validKeys = apiKeys.map((k) => k.trim()).filter(Boolean);
+    if (validKeys.length === 0) {
       vscode.window.showErrorMessage("API key cannot be empty.");
       return;
     }
@@ -234,8 +263,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         return;
       }
 
-      // Call Groq API
-      const result = await this.callGroq(trimmedKey, fullDiff);
+      // Call Groq API (with automatic key fallback on rate-limit)
+      const result = await this.callGroq(validKeys, fullDiff);
 
       // Insert the result into the SCM input box
       repo.inputBox.value = result;
@@ -269,12 +298,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     } catch (error: any) {
       // Check if it's an authentication error (invalid API key)
       if (error instanceof ApiKeyError) {
-        // Clear the invalid stored key
+        // Clear the invalid stored key(s)
         await this.clearStoredApiKey();
 
         // Show error and prompt for new key
         const retry = await vscode.window.showErrorMessage(
-          "Invalid API key. The stored key has been cleared.",
+          "Invalid API key. The stored key(s) have been cleared.",
           "Enter New Key"
         );
 
@@ -308,12 +337,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async generateCommitMessage(apiKey: string) {
-    const overrideKey = process.env.OVERRIDE_MODEL_API_KEY?.trim();
-    const trimmedInputKey = apiKey?.trim();
-    const finalApiKey = overrideKey || trimmedInputKey;
+  private async generateCommitMessage(rawApiKey: string) {
+    const overrideRaw = process.env.OVERRIDE_MODEL_API_KEYS?.trim();
+    const overrideKeys = overrideRaw
+      ? overrideRaw.split(",").map((k) => k.trim()).filter(Boolean)
+      : [];
 
-    if (!finalApiKey) {
+    // Parse comma-separated keys from the webview input
+    const inputKeys = rawApiKey
+      .split(",")
+      .map((k) => k.trim())
+      .filter(Boolean);
+    const finalKeys: string[] = overrideKeys.length > 0 ? overrideKeys : inputKeys;
+
+    if (finalKeys.length === 0) {
       this._view?.webview.postMessage({
         type: "error",
         value: "Please enter a Groq API Key.",
@@ -374,9 +411,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    // 5. Call Groq API
+    // 5. Call Groq API (with automatic key fallback on rate-limit)
     try {
-      const result = await this.callGroq(finalApiKey, fullDiff);
+      const result = await this.callGroq(finalKeys, fullDiff);
       this._view?.webview.postMessage({ type: "result", value: result });
     } catch (error: any) {
       this._view?.webview.postMessage({
@@ -387,7 +424,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async callGroq(apiKey: string, diff: string): Promise<string> {
+  /**
+   * Calls the Groq API, automatically falling back to the next key in the
+   * array when a 429 (rate-limit) response is received.
+   *
+   * Throws ApiKeyError on 401/403, or a regular Error if all keys are
+   * exhausted or any other error occurs.
+   */
+  private async callGroq(apiKeys: string[], diff: string): Promise<string> {
     const model = "openai/gpt-oss-120b";
     const url = "https://api.groq.com/openai/v1/chat/completions";
 
@@ -408,51 +452,89 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       ${diff}
     `;
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: model,
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.5,
-      }),
-    });
+    let lastError: Error = new Error("No API keys provided.");
 
-    // Check HTTP response status first
-    if (!response.ok) {
-      let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+    for (let i = 0; i < apiKeys.length; i++) {
+      const apiKey = apiKeys[i];
+      const isLastKey = i === apiKeys.length - 1;
+
+      let response: Response;
       try {
-        const errorData: any = await response.json();
-        if (errorData.error?.message) {
-          errorMessage = errorData.error.message;
+        response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model: model,
+            messages: [{ role: "user", content: prompt }],
+            temperature: 0.5,
+          }),
+        });
+      } catch (networkError: any) {
+        // Network / fetch-level error — not worth retrying with another key
+        throw networkError;
+      }
+
+      // Check HTTP response status
+      if (!response.ok) {
+        let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+        try {
+          const errorData: any = await response.json();
+          if (errorData.error?.message) {
+            errorMessage = errorData.error.message;
+          }
+        } catch {
+          // Ignore JSON parsing error, use HTTP status message
         }
-      } catch {
-        // Ignore JSON parsing error, use HTTP status message
+
+        // Auth failure — stop immediately, no point trying other keys
+        if (response.status === 401 || response.status === 403) {
+          throw new ApiKeyError(errorMessage);
+        }
+
+        // Rate-limit — try next key if available
+        if (response.status === 429) {
+          lastError = new RateLimitError(errorMessage);
+          if (!isLastKey) {
+            console.log(
+              `[diff-draft] Key #${i + 1} hit rate limit, switching to key #${i + 2}…`
+            );
+            vscode.window.setStatusBarMessage(
+              `$(sync~spin) DiffDraft: rate limit hit, switching to key #${i + 2}…`,
+              5000
+            );
+            continue;
+          }
+          // All keys exhausted
+          throw new Error(
+            `All ${apiKeys.length} API key(s) hit the rate limit. Please wait and try again.`
+          );
+        }
+
+        lastError = new Error(errorMessage);
+        if (!isLastKey) {
+          continue;
+        }
+        throw lastError;
       }
 
-      // Throw ApiKeyError for authentication failures
-      if (response.status === 401 || response.status === 403) {
-        throw new ApiKeyError(errorMessage);
+      const data: any = await response.json();
+
+      if (data.error) {
+        throw new Error(data.error.message || "API returned an error.");
       }
 
-      throw new Error(errorMessage);
+      const content = data.choices?.[0]?.message?.content?.trim();
+      if (!content) {
+        throw new Error("API returned empty response.");
+      }
+
+      return content;
     }
 
-    const data: any = await response.json();
-
-    if (data.error) {
-      throw new Error(data.error.message || "API returned an error.");
-    }
-
-    const content = data.choices?.[0]?.message?.content?.trim();
-    if (!content) {
-      throw new Error("API returned empty response.");
-    }
-
-    return content;
+    throw lastError;
   }
 
   private async commitChanges(message: string) {
@@ -578,8 +660,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       <body>
         <div class="container">
           <div class="input-group" id="apiKeyContainer">
-            <label>Groq API Key</label>
-            <input type="password" id="apiKey" placeholder="Enter your API key..." />
+            <label>Groq API Key(s)</label>
+            <input type="password" id="apiKey" placeholder="gsk_key1, gsk_key2, ..." />
+            <span style="font-size:10px;opacity:0.6;margin-top:2px;">Separate multiple keys with commas for rate-limit fallback</span>
           </div>
 
           <button id="generateBtn">✨ Generate Commit Message</button>
@@ -614,11 +697,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             resultInput.style.height = (resultInput.scrollHeight) + 'px';
           }
 
-          function validateApiKey(key) {
-            const trimmed = key.trim();
-            if (!trimmed) return "Please enter an API Key first.";
-            if (!trimmed.startsWith('gsk_')) return "Invalid API key format. Groq keys start with 'gsk_'.";
-            if (trimmed.length < 20) return "API key appears too short.";
+          function validateApiKey(raw) {
+            const keys = raw.split(',').map(k => k.trim()).filter(Boolean);
+            if (keys.length === 0) return "Please enter an API key first.";
+            for (const k of keys) {
+              if (!k.startsWith('gsk_')) return 'Invalid key format: "' + k.substring(0, 10) + '...". Groq keys start with \'gsk_\'';
+              if (k.length < 20) return 'API key "' + k.substring(0, 10) + '..." appears too short.';
+            }
             return null; // Valid
           }
 
