@@ -27,6 +27,54 @@ class ContextTooLargeError extends Error {
   }
 }
 
+// Custom error class for bad requests (400) that are NOT context-length issues
+class BadRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BadRequestError";
+  }
+}
+
+// Custom error class for not-found errors (404)
+class NotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NotFoundError";
+  }
+}
+
+// Custom error class for unprocessable entity errors (422)
+class UnprocessableEntityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnprocessableEntityError";
+  }
+}
+
+// Custom error class for failed dependency errors (424)
+class FailedDependencyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FailedDependencyError";
+  }
+}
+
+// Custom error class for Groq flex-tier capacity exceeded (498)
+class FlexTierCapacityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FlexTierCapacityError";
+  }
+}
+
+// Custom error class for server-side errors (500, 502, 503)
+class ServerError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ServerError";
+  }
+}
+
 export class SidebarProvider implements vscode.WebviewViewProvider {
   _view?: vscode.WebviewView;
   private _iconIndex = 0; // Counter for sequential icon rotation
@@ -382,6 +430,30 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           // Recursively call the parent method to prompt for a new key
           return this.generateCommitMessageForSCM();
         }
+      } else if (error instanceof ServerError) {
+        vscode.window.showErrorMessage(
+          "Groq server error — this is on Groq's side, please try again later."
+        );
+      } else if (error instanceof FlexTierCapacityError) {
+        vscode.window.showErrorMessage(
+          "Groq flex tier is at capacity. Please try again later."
+        );
+      } else if (error instanceof NotFoundError) {
+        vscode.window.showErrorMessage(
+          "Groq API: resource not found (404). The model may not exist or the endpoint URL is wrong."
+        );
+      } else if (error instanceof UnprocessableEntityError) {
+        vscode.window.showErrorMessage(
+          "Groq could not process the request (422). Try again or simplify your changes."
+        );
+      } else if (error instanceof FailedDependencyError) {
+        vscode.window.showErrorMessage(
+          "Groq request failed due to a dependency error (424). Please try again."
+        );
+      } else if (error instanceof BadRequestError) {
+        vscode.window.showErrorMessage(
+          "Groq bad request (400): " + (error.message || "Review the request format.")
+        );
       } else {
         vscode.window.showErrorMessage(
           "Groq API Error: " + (error.message || "Unknown error occurred.")
@@ -505,10 +577,27 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
       this._view?.webview.postMessage({ type: "result", value: result });
     } catch (error: any) {
+      let userMessage: string;
+      if (error instanceof ApiKeyError) {
+        userMessage = "Invalid API key. Please check your Groq API key.";
+      } else if (error instanceof ServerError) {
+        userMessage = "Groq server error — this is on Groq's side, please try again later.";
+      } else if (error instanceof FlexTierCapacityError) {
+        userMessage = "Groq flex tier is at capacity. Please try again later.";
+      } else if (error instanceof NotFoundError) {
+        userMessage = "Groq API: resource not found (404). The model may not exist.";
+      } else if (error instanceof UnprocessableEntityError) {
+        userMessage = "Groq could not process the request (422). Try again or simplify your changes.";
+      } else if (error instanceof FailedDependencyError) {
+        userMessage = "Groq request failed due to a dependency error (424). Please try again.";
+      } else if (error instanceof BadRequestError) {
+        userMessage = "Groq bad request (400): " + (error.message || "Review the request format.");
+      } else {
+        userMessage = "Groq API Error: " + (error.message || "Unknown error occurred.");
+      }
       this._view?.webview.postMessage({
         type: "error",
-        value:
-          "Groq API Error: " + (error.message || "Unknown error occurred."),
+        value: userMessage,
       });
     }
   }
@@ -517,8 +606,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
    * Calls the Groq API, automatically falling back to the next key in the
    * array when a 429 (rate-limit) response is received.
    *
-   * Throws ApiKeyError on 401/403, or a regular Error if all keys are
-   * exhausted or any other error occurs.
+   * @throws {ApiKeyError}              on 401 Unauthorized / 403 Forbidden
+   * @throws {ContextTooLargeError}     on 413 Request Entity Too Large, or 400 with context-length keywords
+   * @throws {BadRequestError}          on 400 Bad Request (non-context-length)
+   * @throws {NotFoundError}            on 404 Not Found
+   * @throws {UnprocessableEntityError} on 422 Unprocessable Entity
+   * @throws {FailedDependencyError}    on 424 Failed Dependency
+   * @throws {RateLimitError}           on 429 Too Many Requests (after all keys exhausted)
+   * @throws {FlexTierCapacityError}    on 498 Flex Tier Capacity Exceeded
+   * @throws {ServerError}              on 500 / 502 / 503 server-side errors
+   * @throws {Error}                    on network failures or unexpected status codes
    */
   private async callGroq(
     apiKeys: string[],
@@ -581,23 +678,46 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           // Ignore JSON parsing error, use HTTP status message
         }
 
-        // Auth failure — stop immediately, no point trying other keys
+        // --- Map each Groq status code to its error class ---
+
+        // 401 / 403 — Auth failure, stop immediately
         if (response.status === 401 || response.status === 403) {
           throw new ApiKeyError(errorMessage);
         }
 
-        // Context too large — stop immediately, switching keys won't help
-        if (
-          response.status === 413 ||
-          (response.status === 400 &&
-            /context.length|too.many.tokens|maximum.context|token.limit/i.test(
-              errorMessage
-            ))
-        ) {
+        // 413 — Request entity too large, stop immediately
+        if (response.status === 413) {
           throw new ContextTooLargeError(errorMessage);
         }
 
-        // Rate-limit — try next key if available
+        // 400 — Bad request: check if it's actually a context-length issue
+        if (response.status === 400) {
+          if (
+            /context.length|too.many.tokens|maximum.context|token.limit/i.test(
+              errorMessage
+            )
+          ) {
+            throw new ContextTooLargeError(errorMessage);
+          }
+          throw new BadRequestError(errorMessage);
+        }
+
+        // 404 — Not found (wrong URL or non-existent model)
+        if (response.status === 404) {
+          throw new NotFoundError(errorMessage);
+        }
+
+        // 422 — Unprocessable entity (semantic errors or model hallucination)
+        if (response.status === 422) {
+          throw new UnprocessableEntityError(errorMessage);
+        }
+
+        // 424 — Failed dependency
+        if (response.status === 424) {
+          throw new FailedDependencyError(errorMessage);
+        }
+
+        // 429 — Rate limit, try next key if available
         if (response.status === 429) {
           lastError = new RateLimitError(errorMessage);
           if (!isLastKey) {
@@ -611,16 +731,27 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             continue;
           }
           // All keys exhausted
-          throw new Error(
+          throw new RateLimitError(
             `All ${apiKeys.length} API key(s) hit the rate limit. Please wait and try again.`
           );
         }
 
-        lastError = new Error(errorMessage);
-        if (!isLastKey) {
-          continue;
+        // 498 — Groq custom: flex tier capacity exceeded
+        if (response.status === 498) {
+          throw new FlexTierCapacityError(errorMessage);
         }
-        throw lastError;
+
+        // 500 / 502 / 503 — Server-side errors
+        if (
+          response.status === 500 ||
+          response.status === 502 ||
+          response.status === 503
+        ) {
+          throw new ServerError(errorMessage);
+        }
+
+        // Any other unexpected status code
+        throw new Error(errorMessage);
       }
 
       const data: any = await response.json();
