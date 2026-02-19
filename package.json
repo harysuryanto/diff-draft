@@ -27,6 +27,12 @@
         "category": "DiffDraft"
       },
       {
+        "command": "diffDraft.changeApiKey",
+        "title": "Change API Key",
+        "icon": "$(key)",
+        "category": "DiffDraft"
+      },
+      {
         "command": "diffDraft.generating.0",
         "title": "Generating...",
         "icon": "$(clock)",

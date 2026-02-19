@@ -40,6 +40,16 @@ export function activate(context: vscode.ExtensionContext) {
       }
     )
   );
+
+  // Register the Change API Key command
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "diffDraft.changeApiKey",
+      async () => {
+        await sidebarProvider.changeApiKey();
+      }
+    )
+  );
 }
 
 export function deactivate() {}

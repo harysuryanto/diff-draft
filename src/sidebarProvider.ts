@@ -158,6 +158,51 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Prompt the user to enter new API key(s) and store them.
+   * Called from the "DiffDraft: Change API Key" command.
+   */
+  public async changeApiKey(): Promise<void> {
+    // Show current key count for context
+    const existingKeys = await this.getStoredApiKeys();
+    const placeholder = existingKeys.length > 0
+      ? `${existingKeys.length} key(s) currently stored — enter new key(s) to replace`
+      : "gsk_key1, gsk_key2, ...";
+
+    const inputRaw = await vscode.window.showInputBox({
+      prompt: "Enter your Groq API Key(s) — separate multiple keys with commas",
+      password: true,
+      placeHolder: placeholder,
+      ignoreFocusOut: true,
+      validateInput: (value) => {
+        const keys = value.split(",").map((k) => k.trim()).filter(Boolean);
+        if (keys.length === 0) {
+          return "API key cannot be empty.";
+        }
+        for (const k of keys) {
+          if (!k.startsWith("gsk_")) {
+            return `Invalid key format: "${k.substring(0, 10)}...". Groq keys start with 'gsk_'.`;
+          }
+          if (k.length < 20) {
+            return `API key "${k.substring(0, 10)}..." appears too short.`;
+          }
+        }
+        return null;
+      },
+    });
+
+    if (!inputRaw?.trim()) {
+      return; // User cancelled
+    }
+
+    await this.storeApiKey(inputRaw.trim());
+    const count = inputRaw.split(",").map((k) => k.trim()).filter(Boolean).length;
+    vscode.window.setStatusBarMessage(
+      `$(key) DiffDraft: ${count} API key(s) saved successfully`,
+      5000
+    );
+  }
+
+  /**
    * Returns all stored API keys as an array (comma-separated storage).
    */
   private async getStoredApiKeys(): Promise<string[]> {
