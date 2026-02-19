@@ -166,7 +166,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     if (apiKeys.length === 0) {
       const inputRaw = await vscode.window.showInputBox({
         prompt: "Enter your Groq API Key(s) — separate multiple keys with commas",
-        password: true,
+        password: false,
         placeHolder: "gsk_key1, gsk_key2, ...",
         ignoreFocusOut: true,
         validateInput: (value) => {
@@ -218,7 +218,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     const inputRaw = await vscode.window.showInputBox({
       prompt: "Enter your Groq API Key(s) — separate multiple keys with commas",
-      password: true,
+      password: false,
       placeHolder: placeholder,
       ignoreFocusOut: true,
       validateInput: (value) => {
@@ -895,7 +895,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         <div class="container">
           <div class="input-group" id="apiKeyContainer">
             <label>Groq API Key(s)</label>
-            <input type="password" id="apiKey" placeholder="gsk_key1, gsk_key2, ..." />
+            <input type="text" id="apiKey" placeholder="gsk_key1, gsk_key2, ..." />
             <span style="font-size:10px;opacity:0.6;margin-top:2px;">Separate multiple keys with commas for rate-limit fallback</span>
           </div>
 
