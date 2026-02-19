@@ -33,6 +33,13 @@ You can optionally set an environment variable to override the API key:
 
 ## Release Notes
 
+### 1.1.0
+
+- 🔑 **API Key Fallback**: Support for multiple Groq API keys with automatic switching on rate limits (429)
+- 🔔 **Status Bar Feedback**: Displays non-intrusive notifications when switching to a fallback API key
+- 🛡️ **Runtime Security**: Environment variable overrides are now validated and loaded at runtime
+- 🔄 **Improved Reliability**: Better handling of network errors and API timeouts
+
 ### 1.0.4
 
 - 🔄 **Invalid API Key Recovery**: When API returns authentication error (401/403), the stored key is automatically cleared and user is prompted to enter a new one
