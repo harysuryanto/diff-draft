@@ -4,6 +4,15 @@ All notable changes to the "diff-draft" extension will be documented in this fil
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [1.2.1] - 2026-02-19
+
+### Added
+- **Comprehensive Error Handling**: Each Groq API error code now has a dedicated error class (`BadRequestError`, `NotFoundError`, `UnprocessableEntityError`, `FailedDependencyError`, `FlexTierCapacityError`, `ServerError`) with a specific, actionable user message.
+- **Groq Status Code Coverage**: Handles all official Groq error codes — 400, 401, 403, 404, 413, 422, 424, 429, 498, 500, 502, 503 — with accurate behavior (e.g. only 429 triggers key fallback; server errors show Groq-side messaging).
+
+### Changed
+- **API Key Input**: API key fields (webview sidebar and command palette prompts) now display keys as plain text instead of obscured dots.
+
 ## [1.2.0] - 2026-02-19
 
 ### Added

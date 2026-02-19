@@ -2,7 +2,7 @@
   "name": "diff-draft",
   "displayName": "DiffDraft",
   "description": "Generates intelligent commit message drafts from your Git diffs using AI.",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "publisher": "harysuryanto",
   "repository": {
     "type": "git",

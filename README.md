@@ -33,6 +33,11 @@ You can optionally set an environment variable to override the API key:
 
 ## Release Notes
 
+### 1.2.1
+
+- 🛡️ **Comprehensive Error Handling**: Every official Groq API error code (400, 401, 403, 404, 413, 422, 424, 429, 498, 500, 502, 503) now maps to a dedicated error class with a clear, actionable user message.
+- 👁️ **API Key Visibility**: API key input fields (sidebar and command palette) now show keys as plain text.
+
 ### 1.2.0
 
 - 🤖 **Auto Model Switch**: Support for very large diffs! Automatically switches to Groq's high-capacity model (`kimi-k2-instruct`) when the default model's context window is exceeded.
