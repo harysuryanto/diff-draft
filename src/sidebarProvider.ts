@@ -19,6 +19,14 @@ class RateLimitError extends Error {
   }
 }
 
+// Custom error class for context-length / request-too-large errors
+class ContextTooLargeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ContextTooLargeError";
+  }
+}
+
 export class SidebarProvider implements vscode.WebviewViewProvider {
   _view?: vscode.WebviewView;
   private _iconIndex = 0; // Counter for sequential icon rotation
@@ -264,7 +272,25 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
 
       // Call Groq API (with automatic key fallback on rate-limit)
-      const result = await this.callGroq(validKeys, fullDiff);
+      let result: string;
+      try {
+        result = await this.callGroq(validKeys, fullDiff);
+      } catch (retryError: any) {
+        if (retryError instanceof ContextTooLargeError) {
+          // Auto-switch to larger context model
+          vscode.window.setStatusBarMessage(
+            "$(info) DiffDraft: diff too large for default model, switching to Kimi K2…",
+            5000
+          );
+          result = await this.callGroq(
+            validKeys,
+            fullDiff,
+            "moonshotai/kimi-k2-instruct-0905"
+          );
+        } else {
+          throw retryError;
+        }
+      }
 
       // Insert the result into the SCM input box
       repo.inputBox.value = result;
@@ -413,7 +439,25 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     // 5. Call Groq API (with automatic key fallback on rate-limit)
     try {
-      const result = await this.callGroq(finalKeys, fullDiff);
+      let result: string;
+      try {
+        result = await this.callGroq(finalKeys, fullDiff);
+      } catch (retryError: any) {
+        if (retryError instanceof ContextTooLargeError) {
+          // Auto-switch to larger context model
+          vscode.window.setStatusBarMessage(
+            "$(info) DiffDraft: diff too large for default model, switching to Kimi K2…",
+            5000
+          );
+          result = await this.callGroq(
+            finalKeys,
+            fullDiff,
+            "moonshotai/kimi-k2-instruct-0905"
+          );
+        } else {
+          throw retryError;
+        }
+      }
       this._view?.webview.postMessage({ type: "result", value: result });
     } catch (error: any) {
       this._view?.webview.postMessage({
@@ -431,8 +475,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
    * Throws ApiKeyError on 401/403, or a regular Error if all keys are
    * exhausted or any other error occurs.
    */
-  private async callGroq(apiKeys: string[], diff: string): Promise<string> {
-    const model = "openai/gpt-oss-120b";
+  private async callGroq(
+    apiKeys: string[],
+    diff: string,
+    model: string = "openai/gpt-oss-120b"
+  ): Promise<string> {
     const url = "https://api.groq.com/openai/v1/chat/completions";
 
     const prompt = `
@@ -492,6 +539,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         // Auth failure — stop immediately, no point trying other keys
         if (response.status === 401 || response.status === 403) {
           throw new ApiKeyError(errorMessage);
+        }
+
+        // Context too large — stop immediately, switching keys won't help
+        if (
+          response.status === 413 ||
+          (response.status === 400 &&
+            /context.length|too.many.tokens|maximum.context|token.limit/i.test(
+              errorMessage
+            ))
+        ) {
+          throw new ContextTooLargeError(errorMessage);
         }
 
         // Rate-limit — try next key if available

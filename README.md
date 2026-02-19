@@ -33,6 +33,12 @@ You can optionally set an environment variable to override the API key:
 
 ## Release Notes
 
+### 1.2.0
+
+- 🤖 **Auto Model Switch**: Support for very large diffs! Automatically switches to Groq's high-capacity model (`kimi-k2-instruct`) when the default model's context window is exceeded.
+- 🛠️ **Smart Error Detection**: Real-time detection and recovery for context-too-large (413/400) API errors.
+- 🔔 **UX Improvements**: Non-intrusive status bar notification when the model handles large diffs.
+
 ### 1.1.0
 
 - 🔑 **API Key Fallback**: Support for multiple Groq API keys with automatic switching on rate limits (429)

@@ -4,6 +4,13 @@ All notable changes to the "diff-draft" extension will be documented in this fil
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [1.2.0] - 2026-02-19
+
+### Added
+- **Auto Model Switch**: Automatically switches from `openai/gpt-oss-120b` to Groq's largest context model (`moonshotai/kimi-k2-instruct-0905`) when the Git diff exceeds the default context window.
+- **Smart Error Detection**: Detects context-too-large errors (413 or 400 with specific keywords) in real-time.
+- **Improved UX**: Non-intrusive 5-second status bar notification when the model switch occurs.
+
 ## [1.1.0] - 2026-02-19
 
 ### Added
