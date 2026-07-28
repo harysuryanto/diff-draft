@@ -379,10 +379,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         return;
       }
 
-      // Call OpenRouter API with model pooling and key fallback
-      const result = await this.callOpenRouter(validKeys, fullDiff);
+      // Clear input box and stream tokens directly into SCM input box
+      repo.inputBox.value = "";
+      const result = await this.callOpenRouter(
+        validKeys,
+        fullDiff,
+        (_chunk, accumulated) => {
+          repo.inputBox.value = accumulated;
+        },
+      );
 
-      // Insert the result into the SCM input box
+      // Insert final cleaned result
       repo.inputBox.value = result;
       succeeded = true;
 
@@ -556,9 +563,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    // 5. Call OpenRouter API with model pooling
+    // 5. Call OpenRouter API with model pooling and streaming
     try {
-      const result = await this.callOpenRouter(finalKeys, fullDiff);
+      let isFirstChunk = true;
+      const result = await this.callOpenRouter(
+        finalKeys,
+        fullDiff,
+        (_chunk, accumulated) => {
+          if (isFirstChunk) {
+            this._view?.webview.postMessage({ type: "stream_start" });
+            isFirstChunk = false;
+          }
+          this._view?.webview.postMessage({
+            type: "stream_chunk",
+            value: accumulated,
+          });
+        },
+      );
       this._view?.webview.postMessage({ type: "result", value: result });
     } catch (error: any) {
       let userMessage: string;
@@ -596,12 +617,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   /**
-   * Calls OpenRouter API with model pooling and automatic key fallback.
+   * Calls OpenRouter API with model pooling, automatic key fallback, and real-time streaming.
    * Model pool order: ['nvidia/nemotron-3-ultra-550b-a55b:free', 'openrouter/free']
    */
   private async callOpenRouter(
     apiKeys: string[],
     diff: string,
+    onChunk?: (chunk: string, fullText: string) => void,
   ): Promise<string> {
     const url = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -646,6 +668,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               model: model,
               messages: [{ role: "user", content: prompt }],
               temperature: 0.5,
+              stream: true,
             }),
           });
         } catch (networkError: any) {
@@ -771,18 +794,89 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           }
         }
 
-        const data: any = await response.json();
+        // Process SSE Stream
+        let fullText = "";
+        let pendingBuffer = "";
 
-        if (data.error) {
-          throw new Error(data.error.message || "API returned an error.");
+        if (!response.body) {
+          throw new Error("API response body is null");
         }
 
-        const content = data.choices?.[0]?.message?.content?.trim();
-        if (!content) {
+        const processBuffer = (buffer: string): string => {
+          const lines = buffer.split("\n");
+          const remainder = lines.pop() ?? "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith(":")) {
+              continue;
+            }
+            if (trimmed === "data: [DONE]") {
+              continue;
+            }
+
+            if (trimmed.startsWith("data: ")) {
+              const jsonStr = trimmed.slice(6);
+              try {
+                const parsed = JSON.parse(jsonStr);
+                const content = parsed.choices?.[0]?.delta?.content;
+                if (content) {
+                  fullText += content;
+                  if (onChunk) {
+                    onChunk(content, fullText);
+                  }
+                }
+              } catch {
+                // Ignore incomplete JSON chunks
+              }
+            }
+          }
+          return remainder;
+        };
+
+        const reader = (response.body as any).getReader
+          ? (response.body as any).getReader()
+          : null;
+
+        if (reader) {
+          const decoder = new TextDecoder("utf-8");
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              break;
+            }
+            pendingBuffer += decoder.decode(value, { stream: true });
+            pendingBuffer = processBuffer(pendingBuffer);
+          }
+          if (pendingBuffer.length > 0) {
+            processBuffer(pendingBuffer + "\n");
+          }
+        } else {
+          for await (const rawChunk of response.body as any) {
+            const textChunk =
+              typeof rawChunk === "string"
+                ? rawChunk
+                : new TextDecoder("utf-8").decode(rawChunk);
+            pendingBuffer += textChunk;
+            pendingBuffer = processBuffer(pendingBuffer);
+          }
+          if (pendingBuffer.length > 0) {
+            processBuffer(pendingBuffer + "\n");
+          }
+        }
+
+        // Final text cleanup (strip any raw backticks wrapping output)
+        let cleanedText = fullText.trim();
+        cleanedText = cleanedText
+          .replace(/^```[a-z]*\n?/i, "")
+          .replace(/\n?```$/i, "")
+          .trim();
+
+        if (!cleanedText) {
           throw new Error("API returned empty response.");
         }
 
-        return content;
+        return cleanedText;
       }
     }
 
@@ -1010,6 +1104,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           window.addEventListener('message', event => {
             const message = event.data;
             switch (message.type) {
+              case 'stream_start':
+                generateBtn.disabled = true;
+                loader.style.display = 'none';
+                resultInput.value = '';
+                commitBtn.disabled = true;
+                autoResize();
+                break;
+              case 'stream_chunk':
+                resultInput.value = message.value;
+                commitBtn.disabled = resultInput.value.trim().length === 0;
+                autoResize();
+                break;
               case 'result':
                 generateBtn.disabled = false;
                 loader.style.display = 'none';

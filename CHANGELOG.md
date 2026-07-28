@@ -9,6 +9,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 ### Changed
 
 - **Provider Migration**: Completely migrated LLM provider from Groq to OpenRouter API (`https://openrouter.ai/api/v1/chat/completions`).
+- **Real-Time Output Streaming**: Enabled Server-Sent Events (SSE) streaming output directly to the Source Control panel input box and Webview sidebar as tokens arrive.
 - **Model Pooling**: Implemented model pooling using `['nvidia/nemotron-3-ultra-550b-a55b:free', 'openrouter/free']` with automatic failover between models and keys.
 - **Build Automation**: Added `build.js` script to automate compiling and packaging the extension into `diff-draft-v{version}.vsix` with optional `--api-key` argument.
 - **Key Validation**: Updated key validation to accept OpenRouter API key format (`sk-or-` prefix).
