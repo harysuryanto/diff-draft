@@ -1,7 +1,7 @@
 {
   "name": "diff-draft",
   "displayName": "DiffDraft",
-  "description": "Generates intelligent commit message drafts from your Git diffs using AI.",
+  "description": "Generates intelligent commit message drafts from your Git diffs using OpenRouter AI.",
   "version": "1.2.1",
   "publisher": "harysuryanto",
   "repository": {
@@ -117,6 +117,7 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run package",
+    "build": "node scripts/build.js",
     "compile": "npm run check-types && npm run lint && node esbuild.js",
     "watch": "npm-run-all -p watch:*",
     "watch:esbuild": "node esbuild.js --watch",

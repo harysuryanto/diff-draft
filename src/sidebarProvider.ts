@@ -1,7 +1,12 @@
 import * as vscode from "vscode";
 import { GitExtension, Repository } from "./git";
 
-const API_KEY_SECRET_KEY = "diffDraft.groqApiKey";
+const API_KEYS_SECRET_KEY = "diffDraft.openrouterApiKeys";
+
+const MODEL_POOL = [
+  "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "openrouter/free",
+];
 
 // Custom error class for authentication failures
 class ApiKeyError extends Error {
@@ -59,15 +64,7 @@ class FailedDependencyError extends Error {
   }
 }
 
-// Custom error class for Groq flex-tier capacity exceeded (498)
-class FlexTierCapacityError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "FlexTierCapacityError";
-  }
-}
-
-// Custom error class for server-side errors (500, 502, 503)
+// Custom error class for server-side errors (500, 502, 503, 504)
 class ServerError extends Error {
   constructor(message: string) {
     super(message);
@@ -82,7 +79,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
-    private readonly _secrets: vscode.SecretStorage
+    private readonly _secrets: vscode.SecretStorage,
   ) {}
 
   public resolveWebviewView(webviewView: vscode.WebviewView) {
@@ -94,10 +91,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     };
 
     // Check if override key is set at runtime
-    const hasOverrideKey = !!process.env.OVERRIDE_MODEL_API_KEYS?.trim();
+    const hasOverrideKey = !!process.env.OVERRIDE_API_KEYS?.trim();
     webviewView.webview.html = this._getHtmlForWebview(
       webviewView.webview,
-      hasOverrideKey
+      hasOverrideKey,
     );
 
     // Listen for messages from the UI
@@ -138,7 +135,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     // Check if any repositories are available
     if (!git.repositories || git.repositories.length === 0) {
       vscode.window.showErrorMessage(
-        "No Git repository found. Please open a folder with a Git repository."
+        "No Git repository found. Please open a folder with a Git repository.",
       );
       return;
     }
@@ -156,29 +153,37 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    const overrideRaw = process.env.OVERRIDE_MODEL_API_KEYS?.trim();
+    const overrideRaw = process.env.OVERRIDE_API_KEYS?.trim();
     const overrideKeys = overrideRaw
-      ? overrideRaw.split(",").map((k) => k.trim()).filter(Boolean)
+      ? overrideRaw
+          .split(",")
+          .map((k) => k.trim())
+          .filter(Boolean)
       : [];
     const storedKeys = await this.getStoredApiKeys();
-    const apiKeys: string[] = overrideKeys.length > 0 ? overrideKeys : storedKeys;
+    const apiKeys: string[] =
+      overrideKeys.length > 0 ? overrideKeys : storedKeys;
 
     if (apiKeys.length === 0) {
       const inputRaw = await vscode.window.showInputBox({
-        prompt: "Enter your Groq API Key(s) — separate multiple keys with commas",
+        prompt:
+          "Enter your OpenRouter API Key(s) — separate multiple keys with commas",
         password: false,
-        placeHolder: "gsk_key1, gsk_key2, ...",
+        placeHolder: "sk-or-v1-..., sk-or-v1-...",
         ignoreFocusOut: true,
         validateInput: (value) => {
-          const keys = value.split(",").map((k) => k.trim()).filter(Boolean);
+          const keys = value
+            .split(",")
+            .map((k) => k.trim())
+            .filter(Boolean);
           if (keys.length === 0) {
             return "API key cannot be empty.";
           }
           for (const k of keys) {
-            if (!k.startsWith("gsk_")) {
-              return `Invalid key format: "${k.substring(0, 10)}...". Groq keys start with 'gsk_'.`;
+            if (!k.startsWith("sk-or-") && !k.startsWith("sk-")) {
+              return `Invalid key format: "${k.substring(0, 10)}...". OpenRouter keys start with 'sk-or-'.`;
             }
-            if (k.length < 20) {
+            if (k.length < 15) {
               return `API key "${k.substring(0, 10)}..." appears too short.`;
             }
           }
@@ -188,7 +193,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
       if (!inputRaw?.trim()) {
         vscode.window.showWarningMessage(
-          "API key is required to generate commit message."
+          "API key is required to generate commit message.",
         );
         return;
       }
@@ -212,25 +217,30 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   public async changeApiKey(): Promise<void> {
     // Show current key count for context
     const existingKeys = await this.getStoredApiKeys();
-    const placeholder = existingKeys.length > 0
-      ? `${existingKeys.length} key(s) currently stored — enter new key(s) to replace`
-      : "gsk_key1, gsk_key2, ...";
+    const placeholder =
+      existingKeys.length > 0
+        ? `${existingKeys.length} key(s) currently stored — enter new key(s) to replace`
+        : "sk-or-v1-..., sk-or-v1-...";
 
     const inputRaw = await vscode.window.showInputBox({
-      prompt: "Enter your Groq API Key(s) — separate multiple keys with commas",
+      prompt:
+        "Enter your OpenRouter API Key(s) — separate multiple keys with commas",
       password: false,
       placeHolder: placeholder,
       ignoreFocusOut: true,
       validateInput: (value) => {
-        const keys = value.split(",").map((k) => k.trim()).filter(Boolean);
+        const keys = value
+          .split(",")
+          .map((k) => k.trim())
+          .filter(Boolean);
         if (keys.length === 0) {
           return "API key cannot be empty.";
         }
         for (const k of keys) {
-          if (!k.startsWith("gsk_")) {
-            return `Invalid key format: "${k.substring(0, 10)}...". Groq keys start with 'gsk_'.`;
+          if (!k.startsWith("sk-or-") && !k.startsWith("sk-")) {
+            return `Invalid key format: "${k.substring(0, 10)}...". OpenRouter keys start with 'sk-or-'.`;
           }
-          if (k.length < 20) {
+          if (k.length < 15) {
             return `API key "${k.substring(0, 10)}..." appears too short.`;
           }
         }
@@ -243,10 +253,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
 
     await this.storeApiKey(inputRaw.trim());
-    const count = inputRaw.split(",").map((k) => k.trim()).filter(Boolean).length;
+    const count = inputRaw
+      .split(",")
+      .map((k) => k.trim())
+      .filter(Boolean).length;
     vscode.window.setStatusBarMessage(
       `$(key) DiffDraft: ${count} API key(s) saved successfully`,
-      5000
+      5000,
     );
   }
 
@@ -255,7 +268,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
    */
   private async getStoredApiKeys(): Promise<string[]> {
     try {
-      const raw = await this._secrets.get(API_KEY_SECRET_KEY);
+      const raw = await this._secrets.get(API_KEYS_SECRET_KEY);
       if (!raw?.trim()) {
         return [];
       }
@@ -275,7 +288,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     try {
       const trimmedKey = key.trim();
       if (trimmedKey) {
-        await this._secrets.store(API_KEY_SECRET_KEY, trimmedKey);
+        await this._secrets.store(API_KEYS_SECRET_KEY, trimmedKey);
       }
     } catch (error) {
       console.error("Failed to store API key:", error);
@@ -284,13 +297,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   private async clearStoredApiKey(): Promise<void> {
     try {
-      await this._secrets.delete(API_KEY_SECRET_KEY);
+      await this._secrets.delete(API_KEYS_SECRET_KEY);
     } catch (error) {
       console.error("Failed to clear API key:", error);
     }
   }
 
-  private async generateCommitMessageWithKeys(apiKeys: string[]): Promise<void> {
+  private async generateCommitMessageWithKeys(
+    apiKeys: string[],
+  ): Promise<void> {
     // Validate API keys
     const validKeys = apiKeys.map((k) => k.trim()).filter(Boolean);
     if (validKeys.length === 0) {
@@ -314,7 +329,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     if (changes.length === 0) {
       vscode.window.showWarningMessage(
-        "No changes detected (staged or working tree)."
+        "No changes detected (staged or working tree).",
       );
       return;
     }
@@ -334,12 +349,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     await vscode.commands.executeCommand(
       "setContext",
       "diffDraft.isGenerating",
-      true
+      true,
     );
     await vscode.commands.executeCommand(
       "setContext",
       "diffDraft.generatingIcon",
-      currentIconIndex
+      currentIconIndex,
     );
 
     try {
@@ -359,31 +374,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
       if (!fullDiff.trim()) {
         vscode.window.showErrorMessage(
-          "No text diff available. Changes may be binary files only."
+          "No text diff available. Changes may be binary files only.",
         );
         return;
       }
 
-      // Call Groq API (with automatic key fallback on rate-limit)
-      let result: string;
-      try {
-        result = await this.callGroq(validKeys, fullDiff);
-      } catch (retryError: any) {
-        if (retryError instanceof ContextTooLargeError) {
-          // Auto-switch to larger context model
-          vscode.window.setStatusBarMessage(
-            "$(info) DiffDraft: diff too large for default model, switching to Kimi K2…",
-            5000
-          );
-          result = await this.callGroq(
-            validKeys,
-            fullDiff,
-            "moonshotai/kimi-k2-instruct-0905"
-          );
-        } else {
-          throw retryError;
-        }
-      }
+      // Call OpenRouter API with model pooling and key fallback
+      const result = await this.callOpenRouter(validKeys, fullDiff);
 
       // Insert the result into the SCM input box
       repo.inputBox.value = result;
@@ -393,17 +390,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       await vscode.commands.executeCommand(
         "setContext",
         "diffDraft.isGenerating",
-        false
+        false,
       );
       await vscode.commands.executeCommand(
         "setContext",
         "diffDraft.generatingIcon",
-        -1
+        -1,
       );
       await vscode.commands.executeCommand(
         "setContext",
         "diffDraft.isSuccess",
-        true
+        true,
       );
 
       // After 2 seconds, hide success icon and show sparkle again
@@ -411,7 +408,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         await vscode.commands.executeCommand(
           "setContext",
           "diffDraft.isSuccess",
-          false
+          false,
         );
       }, 2000);
     } catch (error: any) {
@@ -423,7 +420,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         // Show error and prompt for new key
         const retry = await vscode.window.showErrorMessage(
           "Invalid API key. The stored key(s) have been cleared.",
-          "Enter New Key"
+          "Enter New Key",
         );
 
         if (retry === "Enter New Key") {
@@ -432,31 +429,34 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         }
       } else if (error instanceof ServerError) {
         vscode.window.showErrorMessage(
-          "Groq server error — this is on Groq's side, please try again later."
-        );
-      } else if (error instanceof FlexTierCapacityError) {
-        vscode.window.showErrorMessage(
-          "Groq flex tier is at capacity. Please try again later."
+          "OpenRouter server error — please try again later.",
         );
       } else if (error instanceof NotFoundError) {
         vscode.window.showErrorMessage(
-          "Groq API: resource not found (404). The model may not exist or the endpoint URL is wrong."
+          "OpenRouter API: resource not found (404). The model may not exist or the endpoint URL is wrong.",
         );
       } else if (error instanceof UnprocessableEntityError) {
         vscode.window.showErrorMessage(
-          "Groq could not process the request (422). Try again or simplify your changes."
+          "OpenRouter could not process the request (422). Try again or simplify your changes.",
         );
       } else if (error instanceof FailedDependencyError) {
         vscode.window.showErrorMessage(
-          "Groq request failed due to a dependency error (424). Please try again."
+          "OpenRouter request failed due to a dependency error (424). Please try again.",
         );
       } else if (error instanceof BadRequestError) {
         vscode.window.showErrorMessage(
-          "Groq bad request (400): " + (error.message || "Review the request format.")
+          "OpenRouter bad request (400): " +
+            (error.message || "Review the request format."),
+        );
+      } else if (error instanceof RateLimitError) {
+        vscode.window.showErrorMessage(
+          "OpenRouter rate limit reached: " +
+            (error.message || "Please try again later."),
         );
       } else {
         vscode.window.showErrorMessage(
-          "Groq API Error: " + (error.message || "Unknown error occurred.")
+          "OpenRouter API Error: " +
+            (error.message || "Unknown error occurred."),
         );
       }
     } finally {
@@ -464,26 +464,28 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       this._isGenerating = false;
 
       // Only reset generating state if we didn't succeed
-      // (on success, we show the success icon instead)
       if (!succeeded) {
         await vscode.commands.executeCommand(
           "setContext",
           "diffDraft.isGenerating",
-          false
+          false,
         );
         await vscode.commands.executeCommand(
           "setContext",
           "diffDraft.generatingIcon",
-          -1
+          -1,
         );
       }
     }
   }
 
   private async generateCommitMessage(rawApiKey: string) {
-    const overrideRaw = process.env.OVERRIDE_MODEL_API_KEYS?.trim();
+    const overrideRaw = process.env.OVERRIDE_API_KEYS?.trim();
     const overrideKeys = overrideRaw
-      ? overrideRaw.split(",").map((k) => k.trim()).filter(Boolean)
+      ? overrideRaw
+          .split(",")
+          .map((k) => k.trim())
+          .filter(Boolean)
       : [];
 
     // Parse comma-separated keys from the webview input
@@ -491,12 +493,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       .split(",")
       .map((k) => k.trim())
       .filter(Boolean);
-    const finalKeys: string[] = overrideKeys.length > 0 ? overrideKeys : inputKeys;
+    const finalKeys: string[] =
+      overrideKeys.length > 0 ? overrideKeys : inputKeys;
 
     if (finalKeys.length === 0) {
       this._view?.webview.postMessage({
         type: "error",
-        value: "Please enter a Groq API Key.",
+        value: "Please enter an OpenRouter API Key.",
       });
       return;
     }
@@ -530,7 +533,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     let fullDiff = "";
     try {
       for (const change of changes) {
-        // Use diffIndexWithHEAD for staged, diffWithHEAD for working tree
         const diff = isStaged
           ? await repo.diffIndexWithHEAD(change.uri.fsPath)
           : await repo.diffWithHEAD(change.uri.fsPath);
@@ -554,46 +556,37 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    // 5. Call Groq API (with automatic key fallback on rate-limit)
+    // 5. Call OpenRouter API with model pooling
     try {
-      let result: string;
-      try {
-        result = await this.callGroq(finalKeys, fullDiff);
-      } catch (retryError: any) {
-        if (retryError instanceof ContextTooLargeError) {
-          // Auto-switch to larger context model
-          vscode.window.setStatusBarMessage(
-            "$(info) DiffDraft: diff too large for default model, switching to Kimi K2…",
-            5000
-          );
-          result = await this.callGroq(
-            finalKeys,
-            fullDiff,
-            "moonshotai/kimi-k2-instruct-0905"
-          );
-        } else {
-          throw retryError;
-        }
-      }
+      const result = await this.callOpenRouter(finalKeys, fullDiff);
       this._view?.webview.postMessage({ type: "result", value: result });
     } catch (error: any) {
       let userMessage: string;
       if (error instanceof ApiKeyError) {
-        userMessage = "Invalid API key. Please check your Groq API key.";
+        userMessage = "Invalid API key. Please check your OpenRouter API key.";
       } else if (error instanceof ServerError) {
-        userMessage = "Groq server error — this is on Groq's side, please try again later.";
-      } else if (error instanceof FlexTierCapacityError) {
-        userMessage = "Groq flex tier is at capacity. Please try again later.";
+        userMessage = "OpenRouter server error — please try again later.";
       } else if (error instanceof NotFoundError) {
-        userMessage = "Groq API: resource not found (404). The model may not exist.";
+        userMessage =
+          "OpenRouter API: resource not found (404). The model may not exist.";
       } else if (error instanceof UnprocessableEntityError) {
-        userMessage = "Groq could not process the request (422). Try again or simplify your changes.";
+        userMessage =
+          "OpenRouter could not process the request (422). Try again or simplify your changes.";
       } else if (error instanceof FailedDependencyError) {
-        userMessage = "Groq request failed due to a dependency error (424). Please try again.";
+        userMessage =
+          "OpenRouter request failed due to a dependency error (424). Please try again.";
       } else if (error instanceof BadRequestError) {
-        userMessage = "Groq bad request (400): " + (error.message || "Review the request format.");
+        userMessage =
+          "OpenRouter bad request (400): " +
+          (error.message || "Review the request format.");
+      } else if (error instanceof RateLimitError) {
+        userMessage =
+          "OpenRouter rate limit reached: " +
+          (error.message || "Please try again later.");
       } else {
-        userMessage = "Groq API Error: " + (error.message || "Unknown error occurred.");
+        userMessage =
+          "OpenRouter API Error: " +
+          (error.message || "Unknown error occurred.");
       }
       this._view?.webview.postMessage({
         type: "error",
@@ -603,26 +596,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   /**
-   * Calls the Groq API, automatically falling back to the next key in the
-   * array when a 429 (rate-limit) response is received.
-   *
-   * @throws {ApiKeyError}              on 401 Unauthorized / 403 Forbidden
-   * @throws {ContextTooLargeError}     on 413 Request Entity Too Large, or 400 with context-length keywords
-   * @throws {BadRequestError}          on 400 Bad Request (non-context-length)
-   * @throws {NotFoundError}            on 404 Not Found
-   * @throws {UnprocessableEntityError} on 422 Unprocessable Entity
-   * @throws {FailedDependencyError}    on 424 Failed Dependency
-   * @throws {RateLimitError}           on 429 Too Many Requests (after all keys exhausted)
-   * @throws {FlexTierCapacityError}    on 498 Flex Tier Capacity Exceeded
-   * @throws {ServerError}              on 500 / 502 / 503 server-side errors
-   * @throws {Error}                    on network failures or unexpected status codes
+   * Calls OpenRouter API with model pooling and automatic key fallback.
+   * Model pool order: ['nvidia/nemotron-3-ultra-550b-a55b:free', 'openrouter/free']
    */
-  private async callGroq(
+  private async callOpenRouter(
     apiKeys: string[],
     diff: string,
-    model: string = "openai/gpt-oss-120b"
   ): Promise<string> {
-    const url = "https://api.groq.com/openai/v1/chat/completions";
+    const url = "https://openrouter.ai/api/v1/chat/completions";
 
     const prompt = `
       You are a senior software architect. Analyze the FOLLOWING code changes deeply and generate a professional Git commit message.
@@ -643,136 +624,172 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     let lastError: Error = new Error("No API keys provided.");
 
-    for (let i = 0; i < apiKeys.length; i++) {
-      const apiKey = apiKeys[i];
-      const isLastKey = i === apiKeys.length - 1;
+    for (let m = 0; m < MODEL_POOL.length; m++) {
+      const model = MODEL_POOL[m];
+      const isLastModel = m === MODEL_POOL.length - 1;
 
-      let response: Response;
-      try {
-        response = await fetch(url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model: model,
-            messages: [{ role: "user", content: prompt }],
-            temperature: 0.5,
-          }),
-        });
-      } catch (networkError: any) {
-        // Network / fetch-level error — not worth retrying with another key
-        throw networkError;
-      }
+      for (let k = 0; k < apiKeys.length; k++) {
+        const apiKey = apiKeys[k];
+        const isLastKey = k === apiKeys.length - 1;
 
-      // Check HTTP response status
-      if (!response.ok) {
-        let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+        let response: Response;
         try {
-          const errorData: any = await response.json();
-          if (errorData.error?.message) {
-            errorMessage = errorData.error.message;
-          }
-        } catch {
-          // Ignore JSON parsing error, use HTTP status message
-        }
-
-        // --- Map each Groq status code to its error class ---
-
-        // 401 / 403 — Auth failure, stop immediately
-        if (response.status === 401 || response.status === 403) {
-          throw new ApiKeyError(errorMessage);
-        }
-
-        // 413 — Request entity too large, stop immediately
-        if (response.status === 413) {
-          throw new ContextTooLargeError(errorMessage);
-        }
-
-        // 400 — Bad request: check if it's actually a context-length issue
-        if (response.status === 400) {
-          if (
-            /context.length|too.many.tokens|maximum.context|token.limit/i.test(
-              errorMessage
-            )
-          ) {
-            throw new ContextTooLargeError(errorMessage);
-          }
-          throw new BadRequestError(errorMessage);
-        }
-
-        // 404 — Not found (wrong URL or non-existent model)
-        if (response.status === 404) {
-          throw new NotFoundError(errorMessage);
-        }
-
-        // 422 — Unprocessable entity (semantic errors or model hallucination)
-        if (response.status === 422) {
-          throw new UnprocessableEntityError(errorMessage);
-        }
-
-        // 424 — Failed dependency
-        if (response.status === 424) {
-          throw new FailedDependencyError(errorMessage);
-        }
-
-        // 429 — Rate limit, try next key if available
-        if (response.status === 429) {
-          lastError = new RateLimitError(errorMessage);
+          response = await fetch(url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${apiKey}`,
+              "HTTP-Referer": "https://github.com/harysuryanto/diff-draft",
+              "X-Title": "DiffDraft",
+            },
+            body: JSON.stringify({
+              model: model,
+              messages: [{ role: "user", content: prompt }],
+              temperature: 0.5,
+            }),
+          });
+        } catch (networkError: any) {
+          lastError = networkError;
           if (!isLastKey) {
-            console.log(
-              `[diff-draft] Key #${i + 1} hit rate limit, switching to key #${i + 2}…`
-            );
-            vscode.window.setStatusBarMessage(
-              `$(sync~spin) DiffDraft: rate limit hit, switching to key #${i + 2}…`,
-              5000
-            );
             continue;
+          } else if (!isLastModel) {
+            break;
+          } else {
+            throw networkError;
           }
-          // All keys exhausted
-          throw new RateLimitError(
-            `All ${apiKeys.length} API key(s) hit the rate limit. Please wait and try again.`
-          );
         }
 
-        // 498 — Groq custom: flex tier capacity exceeded
-        if (response.status === 498) {
-          throw new FlexTierCapacityError(errorMessage);
+        if (!response.ok) {
+          let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+          try {
+            const errorData: any = await response.json();
+            if (errorData.error?.message) {
+              errorMessage = errorData.error.message;
+            }
+          } catch {
+            // Ignore JSON parsing error
+          }
+
+          // 401 / 403 — Auth failure, stop immediately
+          if (response.status === 401 || response.status === 403) {
+            throw new ApiKeyError(errorMessage);
+          }
+
+          // 413 or 400 with context tokens — context limit, fall back to next model
+          if (
+            response.status === 413 ||
+            (response.status === 400 &&
+              /context.length|too.many.tokens|maximum.context|token.limit/i.test(
+                errorMessage,
+              ))
+          ) {
+            lastError = new ContextTooLargeError(errorMessage);
+            if (!isLastModel) {
+              console.log(
+                `[diff-draft] Model ${model} context exceeded, pooling to ${MODEL_POOL[m + 1]}…`,
+              );
+              vscode.window.setStatusBarMessage(
+                `$(info) DiffDraft: ${model} context limit hit, switching model to ${MODEL_POOL[m + 1]}…`,
+                5000,
+              );
+              break; // try next model
+            }
+          }
+
+          // 429 — Rate limit, try next key if available, else next model
+          if (response.status === 429) {
+            lastError = new RateLimitError(errorMessage);
+            if (!isLastKey) {
+              console.log(
+                `[diff-draft] Key #${k + 1} hit rate limit on ${model}, switching to key #${k + 2}…`,
+              );
+              vscode.window.setStatusBarMessage(
+                `$(sync~spin) DiffDraft: rate limit on ${model}, switching to key #${k + 2}…`,
+                5000,
+              );
+              continue;
+            } else if (!isLastModel) {
+              console.log(
+                `[diff-draft] All keys rate limited on ${model}, pooling to ${MODEL_POOL[m + 1]}…`,
+              );
+              vscode.window.setStatusBarMessage(
+                `$(sync~spin) DiffDraft: rate limit on ${model}, pooling to ${MODEL_POOL[m + 1]}…`,
+                5000,
+              );
+              break; // try next model
+            }
+          }
+
+          // 404 — Not found (model unavailable)
+          if (response.status === 404) {
+            lastError = new NotFoundError(errorMessage);
+            if (!isLastModel) {
+              console.log(
+                `[diff-draft] Model ${model} not found/unavailable, pooling to ${MODEL_POOL[m + 1]}…`,
+              );
+              vscode.window.setStatusBarMessage(
+                `$(info) DiffDraft: ${model} unavailable (404), switching to ${MODEL_POOL[m + 1]}…`,
+                5000,
+              );
+              break; // try next model
+            }
+          }
+
+          // 500 / 502 / 503 / 504 — Server-side errors
+          if (response.status >= 500) {
+            lastError = new ServerError(errorMessage);
+            if (!isLastKey) {
+              continue;
+            } else if (!isLastModel) {
+              console.log(
+                `[diff-draft] Server error on ${model}, pooling to ${MODEL_POOL[m + 1]}…`,
+              );
+              vscode.window.setStatusBarMessage(
+                `$(warning) DiffDraft: server error on ${model}, pooling to ${MODEL_POOL[m + 1]}…`,
+                5000,
+              );
+              break; // try next model
+            }
+          }
+
+          if (response.status === 400) {
+            lastError = new BadRequestError(errorMessage);
+          } else if (response.status === 422) {
+            lastError = new UnprocessableEntityError(errorMessage);
+          } else if (response.status === 424) {
+            lastError = new FailedDependencyError(errorMessage);
+          } else {
+            lastError = new Error(errorMessage);
+          }
+
+          if (!isLastKey) {
+            continue;
+          } else if (!isLastModel) {
+            break;
+          } else {
+            throw lastError;
+          }
         }
 
-        // 500 / 502 / 503 — Server-side errors
-        if (
-          response.status === 500 ||
-          response.status === 502 ||
-          response.status === 503
-        ) {
-          throw new ServerError(errorMessage);
+        const data: any = await response.json();
+
+        if (data.error) {
+          throw new Error(data.error.message || "API returned an error.");
         }
 
-        // Any other unexpected status code
-        throw new Error(errorMessage);
+        const content = data.choices?.[0]?.message?.content?.trim();
+        if (!content) {
+          throw new Error("API returned empty response.");
+        }
+
+        return content;
       }
-
-      const data: any = await response.json();
-
-      if (data.error) {
-        throw new Error(data.error.message || "API returned an error.");
-      }
-
-      const content = data.choices?.[0]?.message?.content?.trim();
-      if (!content) {
-        throw new Error("API returned empty response.");
-      }
-
-      return content;
     }
 
     throw lastError;
   }
 
   private async commitChanges(message: string) {
-    // Validate commit message
     if (!message || !message.trim()) {
       vscode.window.showErrorMessage("Commit message cannot be empty.");
       return;
@@ -783,10 +800,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    // Check if there are staged changes
     if (!repo.state.indexChanges || repo.state.indexChanges.length === 0) {
       vscode.window.showErrorMessage(
-        "No staged changes to commit. Please stage your changes first."
+        "No staged changes to commit. Please stage your changes first.",
       );
       return;
     }
@@ -797,7 +813,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       this._view?.webview.postMessage({ type: "success" });
     } catch (e: any) {
       vscode.window.showErrorMessage(
-        "Commit failed: " + (e.message || "Unknown error occurred.")
+        "Commit failed: " + (e.message || "Unknown error occurred."),
       );
     }
   }
@@ -894,14 +910,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       <body>
         <div class="container">
           <div class="input-group" id="apiKeyContainer">
-            <label>Groq API Key(s)</label>
-            <input type="text" id="apiKey" placeholder="gsk_key1, gsk_key2, ..." />
+            <label>OpenRouter API Key(s)</label>
+            <input type="text" id="apiKey" placeholder="sk-or-v1-..., sk-or-v1-..." />
             <span style="font-size:10px;opacity:0.6;margin-top:2px;">Separate multiple keys with commas for rate-limit fallback</span>
           </div>
 
           <button id="generateBtn">✨ Generate Commit Message</button>
           
-          <div class="loader" id="loader">Processing changes with AI...</div>
+          <div class="loader" id="loader">Processing changes with OpenRouter AI...</div>
 
           <div class="input-group">
             <label>Commit Message</label>
@@ -935,18 +951,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             const keys = raw.split(',').map(k => k.trim()).filter(Boolean);
             if (keys.length === 0) return "Please enter an API key first.";
             for (const k of keys) {
-              if (!k.startsWith('gsk_')) return 'Invalid key format: "' + k.substring(0, 10) + '...". Groq keys start with \'gsk_\'';
-              if (k.length < 20) return 'API key "' + k.substring(0, 10) + '..." appears too short.';
+              if (!k.startsWith('sk-or-') && !k.startsWith('sk-')) return 'Invalid key format: "' + k.substring(0, 10) + '...". OpenRouter keys start with \'sk-or-\'';
+              if (k.length < 15) return 'API key "' + k.substring(0, 10) + '..." appears too short.';
             }
             return null; // Valid
           }
 
-          // Restore state if available (only result, not API key for security)
+          // Restore state if available
           const previousState = vscode.getState();
           if (previousState) {
-              // Note: API key is stored in SecretStorage, not webview state
               if (previousState.hasApiKey) {
-                  // Show placeholder to indicate a key exists
                   apiKeyInput.placeholder = '••••••••••••••••';
               }
               if (previousState.result) {
@@ -956,13 +970,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               }
           }
 
-          // Track that user has entered a key (for UX, not the key itself)
           apiKeyInput.addEventListener('input', () => {
              const state = vscode.getState() || {};
              vscode.setState({ ...state, hasApiKey: !!apiKeyInput.value.trim() });
           });
 
-          // Enable commit button only if text exists
           resultInput.addEventListener('input', () => {
              const value = resultInput.value;
              commitBtn.disabled = value.trim().length === 0;
@@ -974,7 +986,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           generateBtn.addEventListener('click', () => {
             const key = apiKeyInput.value;
             
-            // Skip validation if override is active
             if (!isOverrideActive) {
               const validationError = validateApiKey(key);
               if (validationError) {
@@ -1012,7 +1023,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 generateBtn.disabled = false;
                 loader.style.display = 'none';
                 resultInput.value = "Error: " + message.value;
-                // Always disable commit button on error - error messages should not be committed
                 commitBtn.disabled = true;
                 autoResize();
                 break;
