@@ -7,19 +7,22 @@ export function activate(context: vscode.ExtensionContext) {
   // Load .env file from the extension's root directory
   dotenv.config({ path: path.join(context.extensionPath, ".env") });
 
-  // Log OVERRIDE_MODEL_API_KEYS on startup so it's visible in the Debug Console
-  const overrideRaw = process.env.OVERRIDE_MODEL_API_KEYS?.trim();
+  // Log OVERRIDE_API_KEYS on startup so it's visible in the Debug Console
+  const overrideRaw = process.env.OVERRIDE_API_KEYS?.trim();
   if (overrideRaw) {
-    const overrideKeys = overrideRaw.split(",").map((k) => k.trim()).filter(Boolean);
+    const overrideKeys = overrideRaw
+      .split(",")
+      .map((k) => k.trim())
+      .filter(Boolean);
     console.log(
-      `[diff-draft] OVERRIDE_MODEL_API_KEYS active: ${overrideKeys.length} key(s) — ` +
-      overrideKeys.map((k) => k.substring(0, 8) + "...").join(", ")
+      `[diff-draft] OVERRIDE_API_KEYS active: ${overrideKeys.length} key(s) — ` +
+        overrideKeys.map((k) => k.substring(0, 8) + "...").join(", "),
     );
   }
 
   const sidebarProvider = new SidebarProvider(
     context.extensionUri,
-    context.secrets
+    context.secrets,
   );
 
   // SIDEBAR DEACTIVATED - Keeping code for future reference
@@ -37,18 +40,15 @@ export function activate(context: vscode.ExtensionContext) {
       "diffDraft.generateCommitMessage",
       async () => {
         await sidebarProvider.generateCommitMessageForSCM();
-      }
-    )
+      },
+    ),
   );
 
   // Register the Change API Key command
   context.subscriptions.push(
-    vscode.commands.registerCommand(
-      "diffDraft.changeApiKey",
-      async () => {
-        await sidebarProvider.changeApiKey();
-      }
-    )
+    vscode.commands.registerCommand("diffDraft.changeApiKey", async () => {
+      await sidebarProvider.changeApiKey();
+    }),
   );
 }
 
