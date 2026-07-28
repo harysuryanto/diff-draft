@@ -46,12 +46,13 @@ You can optionally set an environment variable to override the API key:
 
 ## Release Notes
 
-### 1.2.1
+### 1.3.0
 
 - 🔄 **Provider Migration**: Completely migrated LLM provider from Groq to OpenRouter.
+- ⚡ **Real-Time Output Streaming**: Stream commit message tokens directly to the SCM panel and Webview sidebar as they arrive.
 - 🤖 **Model Pooling**: Automatic fallback and pooling between `nvidia/nemotron-3-ultra-550b-a55b:free` and `openrouter/free`.
-- 🛠️ **Automated Build Script**: Created `build.js` to package the extension into `diff-draft-v{version}.vsix` with optional `--api-key` argument.
-- 🛡️ **Comprehensive Error Handling**: Dedicated error handling for OpenRouter status codes (400, 401, 403, 404, 413, 422, 424, 429, 500, 502, 503).
+- 🛠️ **Automated Build Script**: Created `scripts/build.js` to package the extension into `diff-draft-v{version}.vsix` with optional `--api-key` argument.
+- 🛡️ **Comprehensive Error Handling**: Dedicated error handling for OpenRouter status codes.
 
 ---
 
