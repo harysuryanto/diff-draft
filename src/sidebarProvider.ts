@@ -107,6 +107,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         case "commit":
           await this.commitChanges(data.message);
           break;
+        case "showError":
+          vscode.window.showErrorMessage(data.value);
+          break;
       }
     });
   }
@@ -380,8 +383,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         return;
       }
 
-      // Clear input box and stream tokens directly into SCM input box
-      repo.inputBox.value = "";
+      // Stream tokens directly into SCM input box as they arrive
       const result = await this.callOpenRouter(
         validKeys,
         fullDiff,
@@ -505,9 +507,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       overrideKeys.length > 0 ? overrideKeys : inputKeys;
 
     if (finalKeys.length === 0) {
+      const msg = "Please enter an OpenRouter API Key.";
+      vscode.window.showErrorMessage(msg);
       this._view?.webview.postMessage({
         type: "error",
-        value: "Please enter an OpenRouter API Key.",
+        value: msg,
       });
       return;
     }
@@ -528,9 +532,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
 
     if (changes.length === 0) {
+      const msg = "No changes detected (staged or working tree).";
+      vscode.window.showErrorMessage(msg);
       this._view?.webview.postMessage({
         type: "error",
-        value: "No changes detected (staged or working tree).",
+        value: msg,
       });
       return;
     }
@@ -548,18 +554,22 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         fullDiff += `\n--- File: ${change.uri.fsPath} ---\n${diff}`;
       }
     } catch (e) {
+      const msg = "Error reading git diffs.";
+      vscode.window.showErrorMessage(msg);
       this._view?.webview.postMessage({
         type: "error",
-        value: "Error reading git diffs.",
+        value: msg,
       });
       return;
     }
 
     // 4. Check if diff is empty (e.g., binary files only)
     if (!fullDiff.trim()) {
+      const msg = "No text diff available. Changes may be binary files only.";
+      vscode.window.showErrorMessage(msg);
       this._view?.webview.postMessage({
         type: "error",
-        value: "No text diff available. Changes may be binary files only.",
+        value: msg,
       });
       return;
     }
@@ -610,6 +620,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           "OpenRouter API Error: " +
           (error.message || "Unknown error occurred.");
       }
+      vscode.window.showErrorMessage(userMessage);
       this._view?.webview.postMessage({
         type: "error",
         value: userMessage,
@@ -619,7 +630,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   /**
    * Calls OpenRouter API with model pooling, automatic key fallback, and real-time streaming.
-   * Model pool order: ['nvidia/nemotron-3-ultra-550b-a55b:free', 'openrouter/free']
+   * Model pool order: ['nvidia/nemotron-3-nano-30b-a3b:free', 'nvidia/nemotron-3-ultra-550b-a55b:free', 'openrouter/free']
    */
   private async callOpenRouter(
     apiKeys: string[],
@@ -1084,17 +1095,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             if (!isOverrideActive) {
               const validationError = validateApiKey(key);
               if (validationError) {
-                resultInput.value = validationError;
-                autoResize();
+                vscode.postMessage({ type: 'showError', value: validationError });
                 return;
               }
             }
             
             generateBtn.disabled = true;
             loader.style.display = 'block';
-            resultInput.value = '';
             autoResize();
-            commitBtn.disabled = true;
+            commitBtn.disabled = resultInput.value.trim().length === 0;
             vscode.postMessage({ type: 'generate', apiKey: isOverrideActive ? '' : key.trim() });
           });
 
@@ -1129,8 +1138,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               case 'error':
                 generateBtn.disabled = false;
                 loader.style.display = 'none';
-                resultInput.value = "Error: " + message.value;
-                commitBtn.disabled = true;
+                commitBtn.disabled = resultInput.value.trim().length === 0;
                 autoResize();
                 break;
               case 'success':
