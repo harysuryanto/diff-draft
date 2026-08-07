@@ -8,7 +8,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Added
 
-- **Model Expansion**: Added `nvidia/nemotron-3-nano-30b-a3b:free` to free tier model pool.
+- **Model Expansion**: Added `nvidia/nemotron-3-nano-30b-a3b:free` to free tier model pool to minimize generation latency.
 
 ### Improved
 
