@@ -5,7 +5,7 @@
 ## Features
 
 - ✨ **AI-Powered Commit Messages**: Automatically generates professional Git commit messages using OpenRouter AI
-- 🤖 **Model Pooling**: Automatically pools and fails over between high-capacity free models (`nvidia/nemotron-3-ultra-550b-a55b:free` and `openrouter/free`)
+- 🤖 **Model Pooling**: Automatically pools and fails over between high-capacity models (`nvidia/nemotron-3-nano-30b-a3b:free`, `nvidia/nemotron-3-ultra-550b-a55b:free`, and `openrouter/free`)
 - 📝 **Conventional Commits**: Outputs formatted messages following Conventional Commits specification (e.g., `feat(auth): add login functionality`)
 - 🔍 **Staged & Working Tree Support**: Analyzes both staged changes and working tree modifications
 - 🔒 **Secure API Key Storage**: API keys are stored securely using VS Code's encrypted SecretStorage
@@ -50,7 +50,7 @@ You can optionally set an environment variable to override the API key:
 
 - 🔄 **Provider Migration**: Completely migrated LLM provider from Groq to OpenRouter.
 - ⚡ **Real-Time Output Streaming**: Stream commit message tokens directly to the SCM panel and Webview sidebar as they arrive.
-- 🤖 **Model Pooling**: Automatic fallback and pooling between `nvidia/nemotron-3-ultra-550b-a55b:free` and `openrouter/free`.
+- 🤖 **Model Pooling**: Automatic fallback and pooling between `nvidia/nemotron-3-nano-30b-a3b:free`, `nvidia/nemotron-3-ultra-550b-a55b:free`, and `openrouter/free`.
 - 🛠️ **Automated Build Script**: Created `scripts/build.js` to package the extension into `diff-draft-v{version}.vsix` with optional `--api-key` argument.
 - 🛡️ **Comprehensive Error Handling**: Dedicated error handling for OpenRouter status codes.
 
