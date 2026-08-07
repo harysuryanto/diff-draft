@@ -4,6 +4,7 @@ import { GitExtension, Repository } from "./git";
 const API_KEYS_SECRET_KEY = "diffDraft.openrouterApiKeys";
 
 const MODEL_POOL = [
+  "nvidia/nemotron-3-nano-30b-a3b:free",
   "nvidia/nemotron-3-ultra-550b-a55b:free",
   "openrouter/free",
 ];
