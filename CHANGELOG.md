@@ -4,6 +4,17 @@ All notable changes to the "diff-draft" extension will be documented in this fil
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [1.3.1] - 2026-08-07
+
+### Added
+
+- **Model Expansion**: Added `nvidia/nemotron-3-nano-30b-a3b:free` to free tier model pool.
+
+### Improved
+
+- **Notification Feedback**: Enhanced error notifications using native VS Code notifications (`vscode.window.showErrorMessage`).
+- **UI & Input Validation**: Fixed webview validation and commit button state management.
+
 ## [1.3.0] - 2026-07-28
 
 ### Changed
